@@ -153,7 +153,7 @@ async function registerSlashCommands(clientId, guildId) {
     });
     log('info', 'Slash commands registered', { guildId });
   } catch (err) {
-    log('error', 'Failed to register slash commands', { error: err.message });
+    log('error', 'Failed to register slash commands', { error: err.message, code: err.code, status: err.status, rawError: err.rawError });
   }
 }
 

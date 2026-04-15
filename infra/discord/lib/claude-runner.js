@@ -1106,6 +1106,7 @@ export async function* createClaudeSession(prompt, {
   } catch (err) {
     if (!signal?.aborted) {
       log('error', 'createClaudeSession: unexpected error', { error: err.message });
+      console.error('[CLAUDE-DEBUG] full error:', err);
       yield { type: 'result', result: '', is_error: true, error: err.message };
     }
   }
