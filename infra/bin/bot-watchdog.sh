@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Cross-platform compat
-source "${JARVIS_HOME:-${BOT_HOME:-${HOME}/.local/share/jarvis}}/lib/compat.sh" 2>/dev/null || true
+source "${JARVIS_HOME:-${BOT_HOME:-${HOME}/jarvis/runtime}}/lib/compat.sh" 2>/dev/null || true
 set -euo pipefail
 
 # Cross-platform: macOS는 launchctl, Linux/WSL2는 PM2 사용
@@ -15,7 +15,7 @@ set -euo pipefail
 #   3. Send alerts via ntfy + Discord webhook
 
 # --- Configuration ---
-BOT_HOME="${BOT_HOME:-${HOME}/.jarvis}"
+BOT_HOME="${BOT_HOME:-${HOME}/jarvis/runtime}"
 BOT_LOG="$BOT_HOME/logs/discord-bot.jsonl"
 WATCHDOG_LOG="$BOT_HOME/logs/bot-watchdog.log"
 MONITORING_CONFIG="$BOT_HOME/config/monitoring.json"
@@ -26,24 +26,13 @@ COOLDOWN_FILE="$STATE_DIR/bot-watchdog-last-alert"
 SILENCE_THRESHOLD_SEC=900   # 15 minutes
 ALERT_COOLDOWN_SEC=900      # 15 minutes between alerts
 
-# Read ntfy config from monitoring.json (fallback to env)
-NTFY_TOPIC="${NTFY_TOPIC:-$(CFG_PATH="$BOT_HOME/config/monitoring.json" python3 -c "import json,os; d=json.load(open(os.environ['CFG_PATH'])); print(d.get('ntfy',{}).get('topic',''))" 2>/dev/null || true)}"
-NTFY_SERVER="${NTFY_SERVER:-$(CFG_PATH="$BOT_HOME/config/monitoring.json" python3 -c "import json,os; d=json.load(open(os.environ['CFG_PATH'])); print(d.get('ntfy',{}).get('server','https://ntfy.sh'))" 2>/dev/null || echo "https://ntfy.sh")}"
-
 mkdir -p "$STATE_DIR" "$(dirname "$WATCHDOG_LOG")"
+
+# --- Shared libraries ---
+source "${BOT_HOME}/lib/ntfy-notify.sh"
 
 # --- Utility ---
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$WATCHDOG_LOG"; }
-
-send_ntfy() {
-    local title="$1" body="$2" priority="${3:-default}"
-    curl -sf -o /dev/null \
-        -H "Title: ${title}" \
-        -H "Priority: ${priority}" \
-        -H "Tags: robot" \
-        -d "${body:0:1000}" \
-        "${NTFY_SERVER}/${NTFY_TOPIC}" 2>/dev/null || true
-}
 
 send_discord_webhook() {
     local message="$1"

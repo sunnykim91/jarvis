@@ -32,6 +32,38 @@ const CHANNEL_OVERRIDES = Object.fromEntries(
 );  // jarvis-market: set MARKET_CHANNEL_ID env var to enable tableToList skip
 
 // ---------------------------------------------------------------------------
+// Narration filter — tool-use 중간과정 제거 (P0 가독성 개선)
+// ---------------------------------------------------------------------------
+
+/**
+ * Claude가 출력하는 tool-use 내러티브("이제 ~합니다", "확인합니다" 등)를
+ * Discord 전송 전에 제거. 코드 블록 내부는 보호.
+ */
+const filterNarration = withCodeFenceGuard((text) => {
+  const patterns = [
+    // "이제/먼저/다음으로 ~합니다/하겠습니다" 류 진행 선언 (존칭/경어 포함)
+    /^.{0,5}(?:이제|먼저|다음으로|그럼|우선|그러면|그리고|또한).{0,60}(?:합니다|하겠습니다|봅니다|살펴봅니다|확인합니다|수정합니다|진행합니다|처리합니다|추가합니다|변경합니다|작성합니다|삭제합니다|설정합니다|적용합니다|조회합니다|설치합니다|실행합니다|분석합니다|검토합니다|시작합니다|해주겠습니다|해드리겠습니다|해보겠습니다|해봅니다|할게요|볼게요|볼까요).*$/gm,
+    // "~를 확인/실행/호출합니다", "~에서 ~를 읽습니다" — 목적어+동사 패턴
+    /^.{0,50}(?:를|을)\s*(?:확인|실행|호출|조회|살펴|검토|분석|가져|불러|로드)(?:합니다|하겠습니다|봅니다|봅시다|볼게요).*$/gm,
+    /^.{0,50}(?:에서|에서는)\s*.{0,20}(?:확인|실행|호출|조회|살펴|검토|분석|가져|불러|로드)(?:합니다|하겠습니다|봅니다|봅시다|볼게요).*$/gm,
+    // "~를 읽습니다/씁니다" — ㅂ니다 종결 동사
+    /^.{0,60}(?:읽습니다|씁니다|찾습니다|봅니다|줍니다|잡습니다|넣습니다|뽑습니다|돌립니다)\.?\s*$/gm,
+    // "완료/확인/수정했습니다." 단독 완료 보고 (요약 아닌 단순 보고)
+    /^.{0,15}(?:완료|확인|수정|삭제|추가|변경|적용|업데이트|저장|생성|등록|설치|실행|복원)(?:했습니다|됐습니다|되었습니다|완료입니다|완료됐습니다|하겠습니다|할게요)\.?\s*$/gm,
+    // "line 42", "Lines 60-61", "라인 42번" 등 코드 행번호 참조
+    /^.{0,15}(?:line|Lines?|라인|줄)\s*\d+(?:\s*[-–~]\s*\d+)?(?:번)?.*(?:제거|삭제|수정|추가|변경|확인).*$/gm,
+    // "결과는 다음과 같습니다" / "상태를 확인했습니다" — 빈 도입부
+    /^(?:결과는 다음과 같습니다|상태를 확인했습니다|다음과 같이 처리했습니다|아래와 같습니다)\.?\s*$/gm,
+  ];
+  let result = text;
+  for (const p of patterns) {
+    result = result.replace(p, '');
+  }
+  // 3+줄 연속 빈줄 → 2줄 (narration 제거 후 빈줄 누적 정리)
+  return result.replace(/\n{3,}/g, '\n\n');
+});
+
+// ---------------------------------------------------------------------------
 // Transforms
 // ---------------------------------------------------------------------------
 
@@ -91,10 +123,10 @@ function trimHorizontalRules(text) {
     .join('');
 }
 
-/** Suppress Discord link previews when 2+ bare URLs in non-code text. */
+/** Suppress Discord link previews for bare URLs (1개라도 프리뷰 카드 방지). */
 const suppressLinkPreviews = withCodeFenceGuard((text) => {
   const bareUrls = text.match(/(?<![(<])(https?:\/\/[^\s>)]+)/g) || [];
-  if (bareUrls.length < 2) return text;
+  if (bareUrls.length < 1) return text;
   return text.replace(/(?<![(<])(https?:\/\/[^\s>)]+)/g, '<$1>');
 });
 
@@ -118,6 +150,7 @@ const discordTimestamp = withCodeFenceGuard((text) =>
 // ---------------------------------------------------------------------------
 
 const TRANSFORMS = [
+  { name: 'filterNarration', fn: filterNarration },
   { name: 'tableToList', fn: tableToList },
   { name: 'normalizeHeadings', fn: normalizeHeadings },
   { name: 'collapseBlankLines', fn: collapseBlankLines },

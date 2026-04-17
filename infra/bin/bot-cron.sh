@@ -16,7 +16,8 @@ unset ANTHROPIC_API_KEY 2>/dev/null || true
 # Prevent nested claude detection
 unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 
-BOT_HOME="${BOT_HOME:-${HOME}/.jarvis}"
+BOT_HOME="${BOT_HOME:-${HOME}/jarvis/runtime}"
+INFRA_DIR="${HOME}/jarvis/infra"
 NODE_SQLITE="node --experimental-sqlite --no-warnings"
 FSM_STORE="${BOT_HOME}/lib/task-store.mjs"
 
@@ -29,18 +30,11 @@ _fsm_transition() {
     local task_id="$1" to_status="$2" extra="${3:-{}}"
     ${NODE_SQLITE} "${FSM_STORE}" transition "$task_id" "$to_status" "bot-cron" "$extra" >/dev/null 2>&1 || true
 }
-_fsm_discord_alert() {
-    # 태스크 실패 시 Discord jarvis-system 채널에 직접 알림 (webhook)
-    local msg="$1"
-    local webhook_url
-    webhook_url=$(jq -r '.webhooks["jarvis-system"] // .webhooks["jarvis"] // empty' "${BOT_HOME}/config/monitoring.json" 2>/dev/null || true)
-    if [[ -n "${webhook_url:-}" ]]; then
-        local payload; payload=$(jq -n --arg m "$msg" '{content: $m}')
-        curl -sS -X POST "$webhook_url" \
-            -H "Content-Type: application/json" \
-            -d "$payload" > /dev/null 2>&1 || true
-    fi
-}
+# 공용 헬퍼 로드 — SSoT: infra/lib/cron-helpers.sh
+if [[ -f "${BOT_HOME}/lib/cron-helpers.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${BOT_HOME}/lib/cron-helpers.sh"
+fi
 # ADR-007: Plugin system — regenerate effective-tasks.json, then use it
 if [[ -x "${BOT_HOME}/bin/plugin-loader.sh" ]]; then
     "${BOT_HOME}/bin/plugin-loader.sh" 2>/dev/null || true
@@ -59,6 +53,11 @@ mkdir -p "$(dirname "$CRON_LOG")"
 log() {
     echo "[$(date '+%F %T')] [${TASK_ID}] $1" >> "$CRON_LOG"
 }
+
+# --- Continue Sites: 다단계 에러 복구 라이브러리 로드 ---
+if [[ -f "${BOT_HOME}/lib/continue-sites.sh" ]]; then
+    source "${BOT_HOME}/lib/continue-sites.sh"
+fi
 
 # --- Completion trap: 비정상 종료 시에도 반드시 로그 기록 ---
 _TASK_DONE=false
@@ -122,7 +121,8 @@ if [[ "$(echo "$TASK_CONFIG" | jq -r '.disabled // false')" == "true" ]]; then
     exit 0
 fi
 # enabled: false 태스크 조용히 건너뜀 (기본값 true)
-if [[ "$(echo "$TASK_CONFIG" | jq -r '.enabled // true')" == "false" ]]; then
+# NOTE: jq `//` 연산자는 null+false 둘 다 fallback → has() 명시 검사로 교정.
+if [[ "$(echo "$TASK_CONFIG" | jq -r 'if has("enabled") then .enabled else true end')" == "false" ]]; then
     log "SKIPPED (enabled: false)"
     _TASK_DONE=true
     exit 0
@@ -163,6 +163,36 @@ ${PROMPT}"
     fi
 fi
 
+# autoInject: SSoT 파일을 프롬프트 앞에 자동 주입 (하드코딩 방지)
+# tasks.json: "autoInject": ["portfolio", "goals"] 또는 절대경로 직접 지정 가능
+# 별칭 매핑: portfolio → state/portfolio.json, goals → config/goals.json
+_INJECT_PREFIX=""
+while IFS= read -r _alias; do
+    [[ -z "$_alias" ]] && continue
+    case "$_alias" in
+        portfolio) _inject_path="${BOT_HOME}/state/portfolio.json" ;;
+        goals)     _inject_path="${BOT_HOME}/config/goals.json" ;;
+        /*)        _inject_path="$_alias" ;;  # 절대경로 직접 지정
+        *)         _inject_path="${BOT_HOME}/state/${_alias}" ;;
+    esac
+    if [[ -f "$_inject_path" ]]; then
+        _inject_label=$(basename "$_inject_path")
+        _INJECT_PREFIX="${_INJECT_PREFIX}[자동 주입 — SSoT: ${_inject_label}]
+$(cat "$_inject_path")
+
+---
+
+"
+        log "autoInject: ${_inject_label} ($(wc -c < "$_inject_path" | tr -d ' ')bytes)"
+    else
+        log "WARN: autoInject 파일 없음: ${_inject_path}"
+    fi
+done < <(echo "$TASK_CONFIG" | jq -r '.autoInject[]? // empty' 2>/dev/null)
+if [[ -n "$_INJECT_PREFIX" ]]; then
+    PROMPT="${_INJECT_PREFIX}${PROMPT}"
+fi
+unset _INJECT_PREFIX _alias _inject_path _inject_label
+
 _PHASE="param-load"
 ALLOWED_TOOLS=$(echo "$TASK_CONFIG" | jq -r '.allowedTools // "Read"')
 TIMEOUT=$(echo "$TASK_CONFIG" | jq -r '.timeout // 180')
@@ -182,6 +212,8 @@ ALLOW_EMPTY_RESULT=$(echo "$TASK_CONFIG" | jq -r '.allowEmptyResult // false')
 SUCCESS_PATTERN=$(echo "$TASK_CONFIG" | jq -r '.successPattern // empty')
 SCRIPT=$(echo "$TASK_CONFIG" | jq -r '.script // empty')
 SCRIPT_ARGS=$(echo "$TASK_CONFIG" | jq -r '.scriptArgs // "daily"')
+# Continue Sites: opt-out 플래그 (기본값 true = 활성화)
+CONTINUE_SITES=$(echo "$TASK_CONFIG" | jq -r '.continueSites // true')
 # output is a JSON array like ["discord","file"]
 OUTPUT_MODES=$(echo "$TASK_CONFIG" | jq -r '.output[]? // empty')
 
@@ -390,14 +422,64 @@ EXIT_CODE=0
 if [[ -n "$SCRIPT" ]]; then
     # script 경로의 ~ 확장
     SCRIPT_PATH="${SCRIPT/#\~/$HOME}"
-    if [[ ! -x "$SCRIPT_PATH" ]]; then
-        log "ERROR: script not found or not executable: $SCRIPT_PATH"
+    SCRIPT_PATH="${SCRIPT_PATH//\$BOT_HOME/$BOT_HOME}"
+    SCRIPT_PATH="${SCRIPT_PATH//\$\{BOT_HOME\}/$BOT_HOME}"
+    SCRIPT_PATH="${SCRIPT_PATH//\$HOME/$HOME}"
+    if [[ "$SCRIPT_PATH" == *'$'* ]]; then
+        log "ERROR: unsupported env var in script path: $SCRIPT_PATH (지원: \$BOT_HOME, \$HOME)"
         _TASK_DONE=true
         exit 1
     fi
-    RESULT=$("$SCRIPT_PATH" "$SCRIPT_ARGS" 2>>"${BOT_HOME}/logs/cron.log") || EXIT_CODE=$?
+    if [[ ! -f "$SCRIPT_PATH" ]]; then
+        log "ERROR: script not found: $SCRIPT_PATH"
+        if ! _permanent_disable_task "$TASK_ID" "script_not_found" "$SCRIPT_PATH"; then
+            log "ERROR: _permanent_disable_task failed for $TASK_ID — manual intervention required"
+        fi
+        _fsm_transition "$TASK_ID" "failed" \
+            "{\"exitCode\":127,\"reason\":\"script_not_found\",\"autoDisabled\":true,\"script\":\"$SCRIPT_PATH\"}"
+        _TASK_DONE=true
+        exit 1
+    fi
+    # Layer 1: script-path도 글로벌 세마포어 보호 (retry-wrapper 경유 태스크와 동일 보호)
+    _SCRIPT_SLOT=""
+    if [[ -f "${INFRA_DIR}/bin/system-semaphore.sh" ]]; then
+        source "${INFRA_DIR}/bin/system-semaphore.sh"
+        _SCRIPT_SLOT=$(acquire_slot 2>/dev/null || true)
+        if [[ -z "$_SCRIPT_SLOT" ]]; then
+            log "WARN: semaphore full — script-path 대기 불가, 직접 실행 (동시 호출 제한 초과 가능)"
+        else
+            log "semaphore acquired: slot ${_SCRIPT_SLOT} for script-path"
+        fi
+    fi
+    # .mjs/.js 파일은 node로 명시적 실행, 아니면 shebang에 의존
+    if [[ "$SCRIPT_PATH" == *.mjs || "$SCRIPT_PATH" == *.js ]]; then
+        RESULT=$(node "$SCRIPT_PATH" "$SCRIPT_ARGS" 2>>"${BOT_HOME}/logs/cron.log") || EXIT_CODE=$?
+    else
+        if [[ ! -x "$SCRIPT_PATH" ]]; then
+            log "ERROR: script not executable: $SCRIPT_PATH"
+            if ! _permanent_disable_task "$TASK_ID" "script_not_executable" "$SCRIPT_PATH"; then
+                log "ERROR: _permanent_disable_task failed for $TASK_ID — manual intervention required"
+            fi
+            _fsm_transition "$TASK_ID" "failed" \
+                "{\"exitCode\":126,\"reason\":\"script_not_executable\",\"autoDisabled\":true,\"script\":\"$SCRIPT_PATH\"}"
+            [[ -n "$_SCRIPT_SLOT" ]] && release_slot "$_SCRIPT_SLOT" 2>/dev/null || true
+            _TASK_DONE=true
+            exit 1
+        fi
+        RESULT=$("$SCRIPT_PATH" "$SCRIPT_ARGS" 2>>"${BOT_HOME}/logs/cron.log") || EXIT_CODE=$?
+    fi
+    # 세마포어 해제
+    [[ -n "$_SCRIPT_SLOT" ]] && release_slot "$_SCRIPT_SLOT" 2>/dev/null || true
 else
-    RESULT=$("$BOT_HOME/bin/retry-wrapper.sh" "$TASK_ID" "$PROMPT" "$ALLOWED_TOOLS" "$TIMEOUT" "$MAX_BUDGET" "$RESULT_RETENTION" "$MODEL" "$TASK_MAX_RETRIES") || EXIT_CODE=$?
+    # Continue Sites: LLM 태스크에 다단계 복구 적용
+    if [[ "$CONTINUE_SITES" != "false" ]] && type run_with_recovery &>/dev/null; then
+        log "CONTINUE_SITES: enabled — 다단계 복구 모드"
+        RESULT=$(run_with_recovery "$TASK_ID" "$BOT_HOME/bin/retry-wrapper.sh" \
+            "$TASK_ID" "$PROMPT" "$ALLOWED_TOOLS" "$TIMEOUT" "$MAX_BUDGET" \
+            "$RESULT_RETENTION" "$MODEL" "$TASK_MAX_RETRIES") || EXIT_CODE=$?
+    else
+        RESULT=$("$BOT_HOME/bin/retry-wrapper.sh" "$TASK_ID" "$PROMPT" "$ALLOWED_TOOLS" "$TIMEOUT" "$MAX_BUDGET" "$RESULT_RETENTION" "$MODEL" "$TASK_MAX_RETRIES") || EXIT_CODE=$?
+    fi
 fi
 
 # --- 실행 시간 측정 + timeout 80% 초과 시 경고 ---
@@ -417,7 +499,11 @@ if [[ $EXIT_CODE -ne 0 ]]; then
     fi
 fi
 if [[ $EXIT_CODE -ne 0 ]]; then
-    log "FAILED (exit: $EXIT_CODE)"
+    if [[ -n "${JARVIS_RECOVERY_STAGE:-}" ]]; then
+        log "FAILED (exit: $EXIT_CODE) — Continue Sites: 전 단계(1~5) 복구 실패"
+    else
+        log "FAILED (exit: $EXIT_CODE)"
+    fi
     # AUTH_ERROR 즉시 감지: 첫 실패에서 ntfy 발송 (Circuit Breaker 3회 대기 없이)
     if echo "$RESULT" | grep -qE '"is_error":true.*"duration_api_ms":0|AUTH_ERROR|Not logged in'; then
         _auth_cooldown="${BOT_HOME}/state/auth-alerted-expired.ts"
@@ -472,7 +558,12 @@ if [[ $EXIT_CODE -ne 0 ]]; then
 fi
 
 _PHASE="post-execute"
-log "SUCCESS (duration=${_ACTUAL_DURATION}s)"
+# Continue Sites: 복구 단계에서 성공한 경우 로그 보강
+if [[ "${JARVIS_RECOVERY_STAGE:-1}" -gt 1 ]]; then
+    log "SUCCESS (duration=${_ACTUAL_DURATION}s, recovered at stage ${JARVIS_RECOVERY_STAGE})"
+else
+    log "SUCCESS (duration=${_ACTUAL_DURATION}s)"
+fi
 unset _ACTUAL_DURATION
 # circuit breaker: 성공 시 초기화
 if [[ -f "$_CB_FILE" ]]; then rm -f "$_CB_FILE" 2>/dev/null || true; fi
@@ -580,7 +671,7 @@ case "$TASK_ID" in
             _ceo_webhook=$(jq -r '.webhooks["jarvis-ceo"] // empty' "${BOT_HOME}/config/monitoring.json" 2>/dev/null || true)
             if [[ -n "${_ceo_webhook:-}" ]]; then
                 _ceo_msg="📥 **뉴스 브리핑 인사이트 인계** ($(date '+%Y-%m-%d'))\n${_insight_raw}"
-                _payload=$(jq -n --arg m "$_ceo_msg" '{content: $m}')
+                _payload=$(jq -n --arg m "$_ceo_msg" '{content: $m, allowed_mentions: {parse: []}}')
                 curl -sS -X POST "$_ceo_webhook" \
                     -H "Content-Type: application/json" \
                     -d "$_payload" > /dev/null 2>&1 || true
@@ -598,7 +689,7 @@ case "$TASK_ID" in
         if [[ -n "$_fsm_summary" ]]; then
             _webhook=$(jq -r '.webhooks["jarvis-system"] // .webhooks["jarvis"] // empty' "${BOT_HOME}/config/monitoring.json" 2>/dev/null || true)
             if [[ -n "${_webhook:-}" ]]; then
-                _payload=$(jq -n --arg m "$_fsm_summary" '{content: $m}')
+                _payload=$(jq -n --arg m "$_fsm_summary" '{content: $m, allowed_mentions: {parse: []}}')
                 curl -sS -X POST "$_webhook" \
                     -H "Content-Type: application/json" \
                     -d "$_payload" > /dev/null 2>&1 || true

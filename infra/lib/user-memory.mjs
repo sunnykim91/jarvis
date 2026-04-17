@@ -1,13 +1,13 @@
 /**
  * UserMemory — per-user persistent long-term memory.
  * Stores facts, preferences, corrections per Discord userId.
- * File: ~/.jarvis/state/users/{userId}.json
+ * File: ~/jarvis/runtime/state/users/{userId}.json
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-const BOT_HOME = process.env.BOT_HOME || join(homedir(), '.jarvis');
+const BOT_HOME = process.env.BOT_HOME || join(homedir(), 'jarvis/runtime');
 const USERS_DIR = join(BOT_HOME, 'state', 'users');
 
 // Family 채널용 노이즈 fact 필터 — 컴팩션 아티팩트·세션 메타 텍스트 제거
@@ -61,9 +61,9 @@ export const userMemory = {
     return _load(userId);
   },
 
-  addFact(userId, fact) {
+  addFact(userId, fact, source = 'unknown') {
     const data = _load(userId);
-    // facts는 string 또는 {text, addedAt[, category]} 혼용 허용 (하위 호환)
+    // facts는 string 또는 {text, addedAt[, category][, source]} 혼용 허용 (하위 호환)
     const normText = (f) => (typeof f === 'string' ? f : f?.text ?? '');
     const exists = data.facts.some(f => normText(f) === fact);
     if (!exists) {
@@ -71,10 +71,55 @@ export const userMemory = {
         text: fact,
         addedAt: new Date().toISOString(),
         category: detectCategory(fact),
+        source,
       });
       data.updatedAt = new Date().toISOString();
       _save(data);
+      return true;
     }
+    return false;
+  },
+
+  // fact 또는 correction에서 텍스트 일치(substring)하는 항목 삭제.
+  // 프롬프트의 "잊어줘" / "삭제해" 플로우용. 정확 매칭 없으면 substring fallback.
+  removeFact(userId, query) {
+    if (!query || typeof query !== 'string') return { removed: 0, facts: 0, corrections: 0 };
+    const q = query.trim();
+    if (!q) return { removed: 0, facts: 0, corrections: 0 };
+    const data = _load(userId);
+    const normText = (f) => (typeof f === 'string' ? f : f?.text ?? '');
+    const match = (f) => {
+      const t = normText(f);
+      return t === q || t.includes(q);
+    };
+    const factsBefore = data.facts.length;
+    const corrBefore = data.corrections.length;
+    data.facts = data.facts.filter(f => !match(f));
+    data.corrections = data.corrections.filter(c => !match(c));
+    const factsRemoved = factsBefore - data.facts.length;
+    const corrRemoved = corrBefore - data.corrections.length;
+    const removed = factsRemoved + corrRemoved;
+    if (removed > 0) {
+      data.updatedAt = new Date().toISOString();
+      _save(data);
+    }
+    return { removed, facts: factsRemoved, corrections: corrRemoved };
+  },
+
+  // Phase 0.5 (표면 통합 학습): 교정 저장 — Discord/CLI 모두 이 메서드로 수렴
+  // source 태그로 어느 표면에서 쌓인 교정인지 추적 가능 → 주간 감사로 불균형 감지
+  addCorrection(userId, fact, source = 'unknown') {
+    const data = _load(userId);
+    const normText = (c) => (typeof c === 'string' ? c : c?.text ?? '');
+    if (data.corrections.some(c => normText(c) === fact)) return false;
+    data.corrections.push({
+      text: String(fact),
+      addedAt: new Date().toISOString(),
+      source,
+    });
+    data.updatedAt = new Date().toISOString();
+    _save(data);
+    return true;
   },
 
   addPlan(userId, plan) {

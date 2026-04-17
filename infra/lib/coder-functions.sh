@@ -7,6 +7,7 @@
 
 source "${BOT_HOME}/lib/compat.sh" 2>/dev/null || true
 source "${BOT_HOME}/lib/log-utils.sh" 2>/dev/null || true
+source "${BOT_HOME}/lib/sprint-contract.sh" 2>/dev/null || true
 
 _TIMEOUT_CMD=$(command -v gtimeout 2>/dev/null || command -v timeout 2>/dev/null || echo "")
 
@@ -37,8 +38,14 @@ _discord_alert() {
 }
 
 # --- Discord #jarvis-ceo 채널 알림 ---
+# debug-cron-* 태스크는 CEO 알림 스킵 (노이즈 방지)
 _discord_ceo_notify() {
     local msg="$1"
+    # debug-cron-* 태스크 ID 패턴이면 스킵
+    if [[ "${TASK_ID:-}" == debug-cron-* ]]; then
+        _coder_log "CEO_NOTIFY_SKIP(debug): ${msg:0:100}"
+        return 0
+    fi
     local monitoring_config="${BOT_HOME}/config/monitoring.json"
     local ceo_webhook
     ceo_webhook=$(jq -r '(.webhooks["jarvis-ceo"] // .webhooks["jarvis"] // empty)' "$monitoring_config" 2>/dev/null || true)
@@ -120,6 +127,7 @@ export default [{
       URL: "readonly", fetch: "readonly", Response: "readonly",
       global: "readonly", globalThis: "readonly", TextEncoder: "readonly",
       TextDecoder: "readonly", AbortController: "readonly", AbortSignal: "readonly",
+      window: "readonly", document: "readonly", navigator: "readonly",
     }
   },
   rules: { "no-undef": "error" }
@@ -138,7 +146,8 @@ ESLINTEOF
         case "$ext" in
             js|mjs)
                 if command -v npx >/dev/null 2>&1; then
-                    _out=$(npx eslint --config "$_ESLINT_GATE_CONFIG" --no-eslintrc "$full_path" 2>&1) || {
+                    # ESLint v10 flat config — eslint.config.mjs 사용
+                    _out=$(NODE_OPTIONS="--no-warnings" npx eslint --config "$_ESLINT_GATE_CONFIG" "$full_path" 2>&1) || {
                         errors=$(( errors + 1 ))
                         error_details="${error_details}\n${full_path}: ${_out}"
                         _coder_log "SYNTAX_GATE 실패 (eslint): ${f}: ${_out:0:200}"
@@ -493,7 +502,81 @@ run_one_task() {
     if [[ "$PATCH_ONLY" == "true" ]]; then
         PROMPT="${PROMPT}
 
-중요: 실제 파일을 수정하지 말 것. 패치 파일만 ~/.jarvis/state/dev-patches/${TASK_ID}.patch 에 unified diff 형식으로 생성하라."
+중요: 실제 파일을 수정하지 말 것. 패치 파일만 ~/jarvis/runtime/state/dev-patches/${TASK_ID}.patch 에 unified diff 형식으로 생성하라."
+    fi
+
+    # Step 4.5: Sprint Contract — 성공 기준 협상
+    local _SC_ENABLED=false
+    if type sc_exists &>/dev/null; then
+        if sc_exists "$TASK_ID"; then
+            # 기존 contract 있음 → 미검증 criteria 기반 프롬프트 보강
+            _SC_ENABLED=true
+            local _unverified
+            _unverified=$(sc_unverified_criteria "$TASK_ID")
+            local _unverified_count
+            _unverified_count=$(echo "$_unverified" | jq 'length' 2>/dev/null || echo "0")
+            if [[ "$_unverified_count" -gt 0 ]]; then
+                PROMPT="${PROMPT}
+
+[Sprint Contract — 미검증 성공 기준 ${_unverified_count}건]
+아래 기준을 충족하도록 작업하라:
+$(echo "$_unverified" | jq -r '.[] | "- [\(.id)] \(.description)"' 2>/dev/null)"
+                _coder_log "SPRINT_CONTRACT: 기존 contract 로드 (task=${TASK_ID}, 미검증=${_unverified_count}건)"
+            else
+                # 모든 criteria 이미 verified → 바로 완료
+                _coder_log "SPRINT_CONTRACT: 모든 criteria 이미 verified → 즉시 완료 (task=${TASK_ID})"
+                sc_archive "$TASK_ID" "completed"
+                update_queue "$TASK_ID" "done" "{\"result_summary\": \"${TASK_NAME} 완료 (contract 전체 검증 통과)\"}"
+                _discord_ceo_notify "✅ **Jarvis Coder**: \`${TASK_NAME}\` (\`${TASK_ID}\`) Sprint Contract 전체 검증 통과"
+                return 0
+            fi
+
+            # maxIterations 초과 체크
+            if sc_check_exhausted "$TASK_ID"; then
+                _coder_log "SPRINT_CONTRACT: maxIterations 초과 → 실패 (task=${TASK_ID})"
+                sc_archive "$TASK_ID" "failed"
+                update_queue "$TASK_ID" "failed" "{\"lastError\": \"sprint_contract_max_iterations\", \"result_summary\": \"Sprint Contract maxIterations 초과\"}"
+                _discord_ceo_notify "❌ **Jarvis Coder**: \`${TASK_ID}\` Sprint Contract 반복 한도 초과 → failed"
+                return 0
+            fi
+        else
+            # contract 없음 → Claude에게 성공 기준 정의 요청
+            _coder_log "SPRINT_CONTRACT: contract 없음 → 생성 시도 (task=${TASK_ID})"
+            local _contract_prompt
+            _contract_prompt=$(sc_build_contract_prompt "$TASK_NAME" "$PROMPT")
+
+            local _contract_result="" _contract_exit=0
+            _contract_result=$("${BOT_HOME}/bin/retry-wrapper.sh" \
+                "${TASK_ID}-contract" "$_contract_prompt" "Read,Bash" "60" "0.50" "30" "") || _contract_exit=$?
+
+            if [[ $_contract_exit -eq 0 && -n "$_contract_result" ]]; then
+                local _parsed_contract
+                _parsed_contract=$(sc_parse_contract_response "$_contract_result") || true
+                if [[ -n "$_parsed_contract" ]]; then
+                    local _objective _criteria _max_iter
+                    _objective=$(echo "$_parsed_contract" | jq -r '.objective // "태스크 완료"')
+                    _criteria=$(echo "$_parsed_contract" | jq -c '.successCriteria // []')
+                    _max_iter=$(echo "$_parsed_contract" | jq -r '.maxIterations // 5')
+                    if sc_create "$TASK_ID" "$_objective" "$_criteria" "$_max_iter"; then
+                        _SC_ENABLED=true
+                        local _criteria_desc
+                        _criteria_desc=$(echo "$_criteria" | jq -r '.[] | "- [\(.id)] \(.description)"' 2>/dev/null || true)
+                        PROMPT="${PROMPT}
+
+[Sprint Contract — 성공 기준]
+아래 기준을 모두 충족하도록 작업하라:
+${_criteria_desc}"
+                        _coder_log "SPRINT_CONTRACT: contract 생성 성공 (task=${TASK_ID})"
+                    else
+                        _coder_log "SPRINT_CONTRACT: contract 생성 실패 → 기존 흐름 fallback (task=${TASK_ID})"
+                    fi
+                else
+                    _coder_log "SPRINT_CONTRACT: contract 응답 파싱 실패 → 기존 흐름 fallback (task=${TASK_ID})"
+                fi
+            else
+                _coder_log "SPRINT_CONTRACT: contract 생성 Claude 호출 실패 (exit=${_contract_exit}) → 기존 흐름 fallback"
+            fi
+        fi
     fi
 
     # Step 5: retry-wrapper.sh 호출
@@ -574,7 +657,98 @@ ${_syntax_err:0:500}
         fi
     fi
 
-    # Step 6: completionCheck 재확인
+    # Step 6: Sprint Contract 검증 또는 completionCheck 재확인
+    if [[ "$_SC_ENABLED" == "true" ]]; then
+        # --- Sprint Contract 기반 검증 ---
+        _coder_log "SPRINT_CONTRACT: 검증 시작 (task=${TASK_ID})"
+        local _verify_results="" _verify_exit=0
+        _verify_results=$("${BOT_HOME}/scripts/verify-sprint-contract.sh" "$TASK_ID" 2>>"$DEV_LOG") || _verify_exit=$?
+
+        if [[ $_verify_exit -eq 2 ]]; then
+            # contract 파일 없음 — fallback to legacy
+            _coder_log "SPRINT_CONTRACT: contract 파일 소실 → legacy completionCheck fallback"
+            _SC_ENABLED=false
+        elif [[ -n "$_verify_results" && "$_verify_results" != "[]" ]]; then
+            # iteration 결과 기록
+            sc_update_iteration "$TASK_ID" "$_verify_results"
+        fi
+    fi
+
+    if [[ "$_SC_ENABLED" == "true" ]]; then
+        if sc_check_complete "$TASK_ID"; then
+            # 모든 criteria verified → 완료!
+            _coder_log "SPRINT_CONTRACT: 전체 criteria 검증 통과 → 완료 (task=${TASK_ID})"
+            sc_archive "$TASK_ID" "completed"
+
+            if [[ -n "$_SNAPSHOT_HASH" ]]; then
+                git -C "$BOT_HOME" add -A >/dev/null 2>&1 || true
+                local _CHANGED_COUNT
+                _CHANGED_COUNT=$(git -C "$BOT_HOME" diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
+                if [[ "$_CHANGED_COUNT" != "0" ]]; then
+                    git -C "$BOT_HOME" commit -m "jarvis-coder: ${TASK_ID} Sprint Contract 완료" \
+                        --no-gpg-sign --quiet 2>/dev/null || true
+                fi
+            fi
+
+            local _changed_files_json="[]" _exec_log_json="[]"
+            if [[ -n "$_SNAPSHOT_HASH" ]]; then
+                _changed_files_json=$(git -C "$BOT_HOME" diff --name-only "${_SNAPSHOT_HASH}..HEAD" 2>/dev/null \
+                    | jq -R -s 'split("\n") | map(select(length > 0))' 2>/dev/null || echo '[]')
+                _exec_log_json=$(git -C "$BOT_HOME" log --oneline "${_SNAPSHOT_HASH}..HEAD" 2>/dev/null \
+                    | jq -R -s 'split("\n") | map(select(length > 0))' 2>/dev/null || echo '[]')
+            fi
+
+            local _sc_done_extra
+            _sc_done_extra=$(jq -n \
+                --arg result_summary "${TASK_NAME} 완료 (Sprint Contract 전체 검증 통과)" \
+                --argjson changed_files "$_changed_files_json" \
+                --argjson execution_log "$_exec_log_json" \
+                '{result_summary:$result_summary, changed_files:$changed_files, execution_log:$execution_log}')
+            update_queue "$TASK_ID" "done" "$_sc_done_extra"
+            _coder_log "완료: ${TASK_ID} (Sprint Contract)"
+            _discord_ceo_notify "✅ **Jarvis Coder**: \`${TASK_NAME}\` (\`${TASK_ID}\`) Sprint Contract 전체 검증 통과"
+        else
+            # 미검증 criteria 존재
+            local _sc_iter_num
+            _sc_iter_num=$(sc_current_iteration "$TASK_ID")
+
+            if sc_check_exhausted "$TASK_ID"; then
+                # maxIterations 초과 → 실패
+                _coder_log "SPRINT_CONTRACT: maxIterations 초과 → 실패 (task=${TASK_ID}, iteration=${_sc_iter_num})"
+                rollback_snapshot "$_SNAPSHOT_HASH"
+                sc_archive "$TASK_ID" "failed"
+                local _sc_fail_extra
+                _sc_fail_extra=$(jq -n \
+                    --arg lastError "sprint_contract_max_iterations" \
+                    --arg result_summary "Sprint Contract: ${_sc_iter_num}회 반복 후 미검증 criteria 잔존" \
+                    '{lastError:$lastError, result_summary:$result_summary, changed_files:[], execution_log:[]}')
+                update_queue "$TASK_ID" "failed" "$_sc_fail_extra"
+                _discord_ceo_notify "❌ **Jarvis Coder**: \`${TASK_ID}\` Sprint Contract ${_sc_iter_num}회 반복 실패"
+            else
+                # 재시도 가능 → queued로 되돌림 (다음 coder 실행 시 미검증 criteria만 재작업)
+                local _remaining
+                _remaining=$(sc_unverified_criteria "$TASK_ID" | jq 'length' 2>/dev/null || echo "?")
+                _coder_log "SPRINT_CONTRACT: 미검증 ${_remaining}건 → 재큐잉 (task=${TASK_ID}, iteration=${_sc_iter_num})"
+
+                # 코드 변경은 유지 (rollback 안 함) — 다음 iteration에서 이어서 작업
+                if [[ -n "$_SNAPSHOT_HASH" ]]; then
+                    git -C "$BOT_HOME" add -A >/dev/null 2>&1 || true
+                    local _CHANGED_COUNT
+                    _CHANGED_COUNT=$(git -C "$BOT_HOME" diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
+                    if [[ "$_CHANGED_COUNT" != "0" ]]; then
+                        git -C "$BOT_HOME" commit -m "jarvis-coder: ${TASK_ID} Sprint Contract iteration #${_sc_iter_num}" \
+                            --no-gpg-sign --quiet 2>/dev/null || true
+                    fi
+                fi
+
+                update_queue "$TASK_ID" "queued" "{\"lastError\": \"sprint_contract_partial\", \"retries\": ${RETRIES}}"
+                _coder_log "SPRINT_CONTRACT: 재큐잉 → iteration #${_sc_iter_num}, 미검증 ${_remaining}건 (task=${TASK_ID})"
+            fi
+        fi
+        return 0
+    fi
+
+    # --- Legacy: completionCheck 기반 검증 (Sprint Contract 미적용 시) ---
     local _CHECK_PASSED=false
     if [[ -z "$COMPLETION_CHECK" || "$COMPLETION_CHECK" == "null" ]]; then
         _CHECK_PASSED=true
@@ -637,4 +811,33 @@ ${_syntax_err:0:500}
         _coder_log "completionCheck 미통과: ${TASK_ID} (${NEW_RETRIES}/${MAX_RETRIES})"
     fi
     return 0
+}
+
+# ── L2 자동승인 게이트 ─────────────────────────────────────────────────────────
+# return 0 = 자동승인 통과 (L2), return 1 = 사람 승인 필요 (L1 유지)
+#
+# PASS  : priority low/medium + 코드 변경 주체 아님 + 저위험 출력 경로
+# BLOCK : urgent/critical/high, 코드 변경 주체 5종, 나머지 불확실
+#
+_l2_auto_approve() {
+    local tname="${1:-}" tdetail="${2:-}" tpri="${3:-medium}"
+
+    # 1. 고위험 우선순위 → L1 유지
+    if [[ "$tpri" =~ ^(urgent|critical|high)$ ]]; then
+        return 1
+    fi
+
+    # 2. 코드 직접 변경 주체 블랙리스트 → L1 유지
+    local blocked
+    for blocked in dev-runner jarvis-coder agent-batch-commit oss-maintenance code-fix; do
+        [[ "$tname" == *"$blocked"* ]] && return 1
+    done
+
+    # 3. 출력 경로가 저위험 디렉토리 → L2 자동승인
+    if [[ "$tdetail" =~ results/|state/|docs/|rag/|config/ ]]; then
+        return 0
+    fi
+
+    # 4. 나머지 불확실 → L1 유지
+    return 1
 }

@@ -18,99 +18,68 @@ import { appendFile, writeFile as writeFileAsync, rename as renameAsync } from '
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import { userMemory } from './user-memory.js';
+import { userMemory } from '../../lib/user-memory.mjs';
+import {
+  detectFeedback as _sharedDetectFeedback,
+  processFeedback as _sharedProcessFeedback,
+  sanitizeUnicode as _sharedSanitizeUnicode,
+} from '../../lib/feedback-loop.mjs';
 import {
   buildIdentitySection, buildLanguageSection, buildPersonaSection,
-  buildPrinciplesSection, buildFormatSection, buildToolsSection,
+  buildPrinciplesSection, buildFormatCoreSection, buildFormatDetailSection,
+  buildFormatSection, buildToolsSection,
   buildSafetySection, buildUserContextSection,
   buildOwnerPreferencesSection, buildOwnerPersonaSection, buildFamilyBriefingContext,
+  buildWikiContextSection,
 } from './prompt-sections.js';
+import { getPromptHarness, Tier } from './prompt-harness.js';
+import { loadHandoff, formatHandoffForPrompt } from './session-handoff.js';
+import { buildChannelFeedSection } from './channel-feed.js';
+import { checkSensitivePath } from './security-guard.js';
+
+import { recordSilentError } from './error-ledger.js';
+
+// LLM Wiki 실시간 기록 — 대화 종료 시 facts를 위키에도 저장
+let _addFactToWiki = null;
+async function wikiAddFact(userId, fact, opts = {}) {
+  try {
+    if (!_addFactToWiki) {
+      const mod = await import('./wiki-engine.mjs');
+      _addFactToWiki = mod.addFactToWiki;
+    }
+    if (_addFactToWiki) {
+      _addFactToWiki(userId, fact, { source: 'discord', ...opts });
+    }
+  } catch (err) { recordSilentError('claude-runner.wikiAddFact', err); }
+}
 
 // ---------------------------------------------------------------------------
 // Feedback detection — recognize user signals for learning loop
 // ---------------------------------------------------------------------------
 
-/** Lone surrogate 제거 — JSON 직렬화 시 invalid high/low surrogate 방지. handlers.js와 동일 구현. */
-export function sanitizeUnicode(str) {
-  if (typeof str !== 'string') return str;
-  return str.replace(/[\uD800-\uDFFF]/g, (match, offset, string) => {
-    const code = match.charCodeAt(0);
-    if (code >= 0xD800 && code <= 0xDBFF) {
-      const next = string.charCodeAt(offset + 1);
-      if (next >= 0xDC00 && next <= 0xDFFF) return match;
-      return '';
-    }
-    const prev = offset > 0 ? string.charCodeAt(offset - 1) : NaN;
-    if (prev >= 0xD800 && prev <= 0xDBFF) return match;
-    return '';
-  });
-}
+// Phase 0.5: detect/process/sanitize 로직은 infra/lib/feedback-loop.mjs 로 추출 (표면 통합 SSoT).
+// 여기서는 Discord 전용 부수효과(RAG sync) 주입하는 래퍼만 유지 — 외부 호출자(handlers.js 등) 하위호환 보장.
+
+export const sanitizeUnicode = _sharedSanitizeUnicode;
+export const detectFeedback = _sharedDetectFeedback;
 
 /**
- * Detect user feedback signals from message text.
- * Returns { type, fact? } or null if no feedback detected.
- */
-export function detectFeedback(text) {
-  const t = text.trim().toLowerCase();
-
-  // 명시적 기억 명령: "기억해:", "/remember", "기억해줘", "메모해줘", "저장해줘", "알아둬"
-  const rememberPrefixMatch = text.match(/^(기억해:|\/remember\s+|기억해줘[,:]?\s*|메모해줘[,:]?\s*|저장해줘[,:]?\s*|알아둬[,:]?\s*)/i);
-  if (rememberPrefixMatch) {
-    const fact = text.slice(rememberPrefixMatch[0].length).trim();
-    return fact ? { type: 'remember', fact } : null;
-  }
-
-  // 긍정 피드백: 15자 이하 짧은 메시지에서만 (긴 대화 오인 방지)
-  // "맞아", "아니" 같은 모호한 단어 제외 — "이게 맞아", "아니야"처럼 명확한 패턴만
-  if (t.length <= 15 && /좋아|잘했어|이게 맞아|완벽|ㄱㅌ|굿|정확해|완벽해|고마워|감사해|도움됐어|덕분에|최고|ㄳ|땡큐/.test(t)) {
-    return { type: 'positive' };
-  }
-
-  // 부정 피드백: 15자 이하 짧은 메시지에서만
-  // "아니", "틀려" 단독 제외 — "아니야", "틀렸어" 등 명확한 패턴만
-  if (t.length <= 15 && /별로야|틀렸어|다시 해|아니야|이건 아닌|잘못됐어|별로|틀림/.test(t)) {
-    return { type: 'negative' };
-  }
-
-  // 교정 패턴: "앞으로는", "다음부터는", "이제부터는", "다음엔", "이다음엔", "그냥 ~해줘"
-  const corrMatch = text.match(/^(앞으로는|다음부터는|이제부터는|다음엔|이다음엔)\s+(.+)/);
-  if (corrMatch) {
-    return { type: 'correction', fact: corrMatch[2] };
-  }
-
-  return null;
-}
-
-/**
- * Process detected feedback and persist to user memory.
+ * Discord용 processFeedback — RAG 마크다운 동기화 콜백을 묶어서 공통 모듈에 위임.
+ * 외부 시그니처 (userId, text) 유지하여 기존 호출부 변경 없음.
  */
 export function processFeedback(userId, text) {
-  const fb = detectFeedback(text);
-  if (!fb) return null;
-
-  if (fb.type === 'remember' && fb.fact) {
-    userMemory.addFact(userId, fb.fact);
-    log('info', 'Feedback: remember', { userId, fact: fb.fact.slice(0, 100) });
-    // RAG 즉시 반영 (fire-and-forget)
-    _syncUserMemoryMarkdown(userId).catch((e) => log('warn', 'processFeedback: RAG sync failed', { userId, error: e.message }));
-  } else if (fb.type === 'correction' && fb.fact) {
-    const data = userMemory.get(userId);
-    // corrections는 string(레거시) 또는 {text, addedAt} 혼용 허용 (하위 호환)
-    const normalizeCorr = (c) => (typeof c === 'string' ? c : c?.text ?? '');
-    if (!data.corrections.some(c => normalizeCorr(c) === fb.fact)) {
-      data.corrections.push({ text: sanitizeUnicode(fb.fact), addedAt: new Date().toISOString() });
-      data.updatedAt = new Date().toISOString();
-      const usersDir = join(process.env.BOT_HOME || join(homedir(), '.jarvis'), 'state', 'users');
-      mkdirSync(usersDir, { recursive: true });
-      writeFileSync(join(usersDir, `${userId}.json`), JSON.stringify(data, null, 2));
-    }
-    log('info', 'Feedback: correction', { userId, fact: fb.fact.slice(0, 100) });
-  } else if (fb.type === 'positive') {
-    log('info', 'Feedback: positive', { userId });
-  } else if (fb.type === 'negative') {
-    log('info', 'Feedback: negative', { userId });
+  const { fb } = _sharedProcessFeedback({
+    userId,
+    text,
+    source: 'discord-bot',
+    onFactSaved: (uid) => _syncUserMemoryMarkdown(uid),
+    onCorrectionSaved: () => { /* corrections는 RAG md에 포함 안 됨 — syncMarkdown 생략 */ },
+  });
+  if (fb) {
+    if (fb.type === 'remember') log('info', 'Feedback: remember', { userId, fact: fb.fact?.slice(0, 100) });
+    else if (fb.type === 'correction') log('info', 'Feedback: correction', { userId, fact: fb.fact?.slice(0, 100) });
+    else log('info', `Feedback: ${fb.type}`, { userId });
   }
-
   return fb;
 }
 
@@ -119,7 +88,7 @@ export function processFeedback(userId, text) {
 // ---------------------------------------------------------------------------
 
 const HOME = homedir();
-const BOT_HOME = join(process.env.BOT_HOME || join(HOME, '.jarvis'));
+const BOT_HOME = join(process.env.BOT_HOME || join(HOME, 'jarvis/runtime'));
 const MODELS = JSON.parse(readFileSync(join(BOT_HOME, 'config', 'models.json'), 'utf-8'));
 const DISCORD_MCP_PATH = join(BOT_HOME, 'config', 'discord-mcp.json');
 const USER_PROFILE_PATH = join(BOT_HOME, 'context', 'user-profile.md');
@@ -352,7 +321,7 @@ export function saveConversationTurn(userMsg, botMsg, channelName, userId = null
 /**
  * RAG 마크다운용 민감정보 마스킹.
  * JSON(시스템 프롬프트 주입)은 원본 유지 — 봇이 예약번호 직접 질문에 여전히 답할 수 있음.
- * RAG는 키워드 연상 검색용이므로 마스킹해도 "삿포로 여행" 검색에는 지장 없음.
+ * RAG는 키워드 연상 검색용이므로 마스킹해도 "destination-b 여행" 검색에는 지장 없음.
  */
 function _redactForRag(text) {
   return text
@@ -471,8 +440,8 @@ export async function autoExtractMemory(userId, userMsg, botMsg, channelId = nul
   }
   _extractCooldown.set(userId, now);
 
-  const FAMILY_CHANNEL_ID = process.env.FAMILY_CHANNEL_ID || '';
-  const isFamilyChannel = channelId === FAMILY_CHANNEL_ID;
+  const FAMILY_CHANNEL_IDS = (process.env.FAMILY_CHANNEL_IDS || process.env.FAMILY_CHANNEL_ID || '').split(',').filter(Boolean);
+  const isFamilyChannel = !!channelId && FAMILY_CHANNEL_IDS.includes(channelId);
 
   // family 채널 전용 추출 프롬프트 — Owner/시스템 데이터 오염 방지
   const prompt = isFamilyChannel ? [
@@ -488,11 +457,14 @@ export async function autoExtractMemory(userId, userMsg, botMsg, channelId = nul
     '- [2026-xx-xx] User: ... Jarvis: ... 형태의 대화 스니펫은 추출 금지.',
     '- 150자 이상 되는 사실은 추출 금지 (요약이 아닌 원문 복붙 방지).',
     '',
+    '⭐ 중요도 점수 (1-5): 5=핵심 선호/제약, 4=구체적 계획/사람, 3=유용하지만 맥락적, 2=일시적, 1=자명.',
+    '→ score 3 이상만 추출.',
+    '',
     `<<가족 멤버 메시지>>\n${userMsg.slice(0, 400)}`,
     `<<자비스 응답>>\n${botMsg.slice(0, 600)}`,
     '',
     '출력 형식 (JSON 배열만, 다른 텍스트 없이 마지막 줄에):',
-    '["사실1", "사실2"]',
+    '[{"fact":"사실1","score":4}, {"fact":"사실2","score":5}]',
   ].join('\n') : [
     '다음 대화에서 미래 대화에 도움될 구체적 사실을 추출해줘.',
     '기준: 사람 이름/일정/장소/선호/계획/결정 같은 구체적 정보. 일반 상식이나 자명한 사실 제외.',
@@ -504,11 +476,19 @@ export async function autoExtractMemory(userId, userMsg, botMsg, channelId = nul
     '- the user의 직접 발언인지 불명확하면 추출하지 않는다.',
     '- "오너의 계정명은 X다", "오너는 X를 선호한다" 형태는 오너가 직접 말한 경우에만 기록.',
     '',
+    '⭐ 중요도 점수 (1-5, Mem0 패턴):',
+    '- 5: 핵심 결정/선호/제약 (반복 참조 예상)',
+    '- 4: 구체적 계획/일정/사람 정보',
+    '- 3: 유용하지만 맥락 의존적',
+    '- 2: 일시적 사실 (며칠 후 무의미)',
+    '- 1: 자명하거나 일반적',
+    '→ score 3 이상만 추출. 2 이하는 버린다.',
+    '',
     `<<사용자>>\n${userMsg.slice(0, 500)}`,
     `<<봇>>\n${botMsg.slice(0, 800)}`,
     '',
     '출력 형식 (JSON 배열만, 다른 텍스트 없이 마지막 줄에):',
-    '["사실1", "사실2"]',
+    '[{"fact":"사실1","score":4}, {"fact":"사실2","score":5}]',
   ].join('\n');
 
   try {
@@ -556,13 +536,23 @@ export async function autoExtractMemory(userId, userMsg, botMsg, channelId = nul
           se2 = ob - 1;
         }
         if (facts2) {
-          const FAMILY_JUNK_RE = /userid.*family|userid.*owner|compacted at|사용자 의도|완료된 작업|미완 작업|핵심 참조|\[20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\]/i;
+          const FAMILY_JUNK_RE = /userid.*family|userid.*owner|userid.*boram|compacted at|사용자 의도|완료된 작업|미완 작업|핵심 참조|\[20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\]/i;
+          const IMPORTANCE_THRESHOLD = 3; // Mem0 패턴: score 3 이상만 저장
           let saved2 = 0;
-          for (const f of facts2) {
-            if (typeof f === 'string' && f.length > 5 && f.length < 160 && !(isFamilyChannel && FAMILY_JUNK_RE.test(f))) {
-              userMemory.addFact(userId, f); saved2++;
-              log('info', 'Auto memory extracted (SDK)', { userId, fact: f.slice(0, 80) });
+          for (const item of facts2) {
+            // 호환: {"fact":"...", "score":N} 형식 또는 기존 "string" 형식 둘 다 처리
+            const f = typeof item === 'string' ? item : item?.fact;
+            const score = typeof item === 'object' ? (item?.score ?? 5) : 5; // 기존 형식은 점수 5 기본
+            if (!f || typeof f !== 'string') continue;
+            if (f.length <= 5 || f.length >= 160) continue;
+            if (isFamilyChannel && FAMILY_JUNK_RE.test(f)) continue;
+            if (score < IMPORTANCE_THRESHOLD) {
+              log('debug', 'Auto memory skipped (low importance)', { userId, fact: f.slice(0, 60), score });
+              continue;
             }
+            userMemory.addFact(userId, f, 'discord-auto-extract-sdk'); saved2++;
+            wikiAddFact(userId, f); // LLM Wiki 실시간 기록
+            log('info', 'Auto memory extracted (SDK)', { userId, fact: f.slice(0, 80), score });
           }
           if (saved2 > 0) {
             await _syncUserMemoryMarkdown(userId).catch(() => {});
@@ -598,25 +588,34 @@ export async function autoExtractMemory(userId, userMsg, botMsg, channelId = nul
     const data = await response.json();
     const result = data?.content?.[0]?.text ?? '';
 
-    // Structured Outputs 보장으로 bracket-matching 불필요 — 직접 파싱
+    // Structured Outputs 또는 자유형 JSON 파싱 — [{fact, score}] 또는 ["string"] 호환
     let facts = null;
     try {
       const parsed = JSON.parse(result.trim());
-      if (Array.isArray(parsed) && parsed.every(x => typeof x === 'string')) facts = parsed;
+      if (Array.isArray(parsed)) facts = parsed;
     } catch { /* invalid JSON — skip */ }
     if (!facts) {
       log('debug', 'autoExtractMemory: no valid JSON array found', { userId, raw: result.slice(-150) });
       return;
     }
 
-    const FAMILY_JUNK_RE2 = /userid.*family|userid.*owner|compacted at|사용자 의도|완료된 작업|미완 작업|핵심 참조|\[20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\]/i;
+    const FAMILY_JUNK_RE2 = /userid.*family|userid.*owner|userid.*boram|compacted at|사용자 의도|완료된 작업|미완 작업|핵심 참조|\[20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\]/i;
+    const IMPORTANCE_THRESHOLD2 = 3;
     let saved = 0;
-    for (const fact of facts) {
-      if (typeof fact === 'string' && fact.length > 5 && fact.length < 160 && !(isFamilyChannel && FAMILY_JUNK_RE2.test(fact))) {
-        userMemory.addFact(userId, fact);
-        saved++;
-        log('info', 'Auto memory extracted', { userId, fact: fact.slice(0, 80) });
+    for (const item of facts) {
+      const fact = typeof item === 'string' ? item : item?.fact;
+      const score = typeof item === 'object' ? (item?.score ?? 5) : 5;
+      if (!fact || typeof fact !== 'string') continue;
+      if (fact.length <= 5 || fact.length >= 160) continue;
+      if (isFamilyChannel && FAMILY_JUNK_RE2.test(fact)) continue;
+      if (score < IMPORTANCE_THRESHOLD2) {
+        log('debug', 'Auto memory skipped (low importance)', { userId, fact: fact.slice(0, 60), score });
+        continue;
       }
+      userMemory.addFact(userId, fact, 'discord-auto-extract');
+      wikiAddFact(userId, fact);
+      saved++;
+      log('info', 'Auto memory extracted', { userId, fact: fact.slice(0, 80), score });
     }
 
     // RAG 즉시 반영: user-memory 마크다운을 discord-history에 기록 → rag-watch 자동 감지
@@ -649,9 +648,10 @@ export async function autoExtractMemory(userId, userMsg, botMsg, channelId = nul
 // ---------------------------------------------------------------------------
 
 export async function* createClaudeSession(prompt, {
-  sessionId, threadId, channelId, ragContext, attachments = [],
+  sessionId, threadId, channelId, channelName, ragContext, attachments = [],
   contextBudget, userId, signal,
   injectedSummary = '',
+  _budgetMode = 'normal',  // Progressive Compaction: 'normal' | 'lean'
 } = {}) {
   // 1. Setup stable workDir — same 4-layer token isolation as before
   const stableDir = join('/tmp', 'claude-discord', String(threadId));
@@ -680,7 +680,7 @@ export async function* createClaudeSession(prompt, {
   //     context/owner/preferences.md: tool/service constraints (calendar, tasks, etc.)
   if (!createClaudeSession._ownerPrefsCache || nowMs - (createClaudeSession._ownerPrefsCacheTime || 0) > 300_000) {
     try {
-      const BOT_HOME_EARLY = process.env.BOT_HOME || `${homedir()}/.jarvis`;
+      const BOT_HOME_EARLY = process.env.BOT_HOME || `${homedir()}/jarvis/runtime`;
       createClaudeSession._ownerPrefsCache = buildOwnerPreferencesSection({ botHome: BOT_HOME_EARLY });
     } catch {
       createClaudeSession._ownerPrefsCache = '';
@@ -706,27 +706,34 @@ export async function* createClaudeSession(prompt, {
     profileCache: createClaudeSession._profileCache,
   });
 
-  const BOT_HOME = process.env.BOT_HOME || `${homedir()}/.jarvis`;
+  const BOT_HOME = process.env.BOT_HOME || `${homedir()}/jarvis/runtime`;
 
-  // 5. Build system prompt — stable sections contribute to session hash
+  // 5. Build system prompt — Prompt Harness (Tiered Lazy Loading)
+  //    Tier 0: 항상 로드 (<3KB) — identity, language, persona, principles, format-core, tools, safety
+  //    Tier 1: 키워드 매칭 시만 — format-detail (비교/차트/표 관련 쿼리)
+  // Harness 섹션 등록 (싱글톤 + 등록 완료 플래그로 레이스 컨디션 방지)
+  const harness = getPromptHarness();
+  if (!createClaudeSession._harnessRegistered) {
+    createClaudeSession._harnessRegistered = true; // 원자적 플래그 — 동시 호출에서 중복 등록 방지
+    // Tier 0 — 항상 로드 (등록 순서가 session hash에 영향 — 변경 금지)
+    harness.register('identity', Tier.CORE, () => buildIdentitySection({ botName: process.env.BOT_NAME, ownerName }));
+    harness.register('language', Tier.CORE, () => buildLanguageSection());
+    harness.register('persona', Tier.CORE, () => buildPersonaSection({ ownerName }));
+    harness.register('principles', Tier.CORE, () => buildPrinciplesSection());
+    harness.register('format-core', Tier.CORE, () => buildFormatCoreSection());
+    harness.register('tools', Tier.CORE, () => buildToolsSection({ botHome: BOT_HOME }));
+    harness.register('safety', Tier.CORE, () => buildSafetySection({ botHome: BOT_HOME }));
+    // Tier 1 — 키워드 매칭 시만 로드
+    harness.register('format-detail', Tier.CONTEXTUAL, () => buildFormatDetailSection(),
+      /비교|vs|차이점|장단점|표|차트|그래프|추이|트렌드|TABLE|CHART|CV2|Mermaid|다이어그램|플로우/i);
+  }
+
+  // 토큰 예산 모드: Progressive Compaction에서 전달
+  const _tokenBudgetMode = _budgetMode || 'normal';
+  const { prompt: harnessPrompt, loadedSections } = harness.assemble(prompt, { budgetMode: _tokenBudgetMode });
+
   const systemParts = [
-    // ── 정체성 ──────────────────────────────────────────────────────────────
-    buildIdentitySection({ botName: process.env.BOT_NAME, ownerName }),
-    buildLanguageSection(),
-
-    // ── 페르소나 ─────────────────────────────────────────────────────────────
-    buildPersonaSection({ ownerName }),
-
-    // ── 실행 원칙 + 포맷 금지 ────────────────────────────────────────────────
-    buildPrinciplesSection(),
-    buildFormatSection(),
-
-    // ── 도구 선택 ────────────────────────────────────────────────────────────
-    buildToolsSection({ botHome: BOT_HOME }),
-
-    // ── 안전 ─────────────────────────────────────────────────────────────────
-    buildSafetySection({ botHome: BOT_HOME }),
-
+    harnessPrompt,
     // ── 사용자 컨텍스트 ──────────────────────────────────────────────────────
     ...userContextParts,
   ];
@@ -769,7 +776,8 @@ export async function* createClaudeSession(prompt, {
   // memSnippet and usageSummary are intentionally excluded:
   //   - memSnippet changes on every memory addition → would force new session every turn
   //   - usageSummary contains time-varying data ("리셋 Xm 후") → same issue
-  const stableSystemPrompt = systemParts.join('\n');
+  // Session hash: Tier 0(Core) 섹션만으로 계산 — Tier 1은 쿼리마다 달라지므로 제외
+  const stableSystemPrompt = harness.assembleCoreOnly();
   const promptVersion = createHash('md5').update(stableSystemPrompt).digest('hex').slice(0, 8);
 
   // Dynamic sections: injected after hash (don't affect session continuity)
@@ -793,8 +801,7 @@ export async function* createClaudeSession(prompt, {
       const rawMemStr = JSON.stringify(rawMemData);
       const currentHash = createHash('md5').update(rawMemStr).digest('hex');
       const cached = memoryHashCache.get(userId);
-      const stableSystemLen = stableSystemPrompt.length;
-      if (cached && cached.hash === currentHash && stableSystemLen < 40000) {
+      if (cached && cached.hash === currentHash) {
         memSnippet = cached.snippet;
       } else {
         if (prompt) {
@@ -808,6 +815,30 @@ export async function* createClaudeSession(prompt, {
       memSnippet = userMemory.getPromptSnippet(userId);
     }
     if (memSnippet) systemParts.push('', '--- 사용자 기억 (User Memory) ---', memSnippet);
+  }
+
+  // Channel feed context (dynamic — 채널에 최근 전송된 봇/크론/알람 메시지)
+  // 사용자가 "방금 크론이 보낸 거 뭐야?" 등 채널 컨텍스트를 참조할 때 재질문 방지
+  if (channelName) {
+    const feedCtx = buildChannelFeedSection(channelName, 15);
+    if (feedCtx) systemParts.push('', feedCtx);
+  }
+
+  // Session Handoff (dynamic — 이전 세션의 구조화된 상태 전달)
+  // Anthropic Sensors 패턴: compacted summary보다 정확한 토픽/결정/미완료 전달
+  // sessionKey는 handlers.js와 동일 구성: threadId-userId (thread 기반) 또는 channelId-userId
+  {
+    const handoffKey = `${threadId}-${userId}`;
+    const handoff = loadHandoff(handoffKey);
+    const handoffText = formatHandoffForPrompt(handoff);
+    if (handoffText) systemParts.push('', handoffText);
+  }
+
+  // LLM Wiki context (dynamic — 세션 해시 영향 없음)
+  // 2-track: 전역 도메인 위키 + 사용자 개인 페이지(pages/{userId}/)
+  if (userId && isOwner && prompt) {
+    const wikiCtx = buildWikiContextSection({ prompt, botHome: BOT_HOME, userId });
+    if (wikiCtx) systemParts.push('', wikiCtx);
   }
 
   // Claude Max usage summary
@@ -852,6 +883,12 @@ export async function* createClaudeSession(prompt, {
       ? '게스트(미등록 사용자)'
       : `${activeUserProfile.name}(${activeUserProfile.title})`;
     ctxParts.push(`[대화 상대] ${senderLabel}`);
+    // Channel feed: resume 시에도 최신 채널 활동 주입 (세션 연속성과 무관하게 매턴 갱신)
+    // limit=5 — 토큰 절약. cron/alert만 의미 있는 컨텍스트이므로 최근 5개로 충분
+    if (channelName) {
+      const feedCtx = buildChannelFeedSection(channelName, 5);
+      if (feedCtx) ctxParts.push(feedCtx);
+    }
     // Phase 2: 이전 세션 요약 주입 (resume 성공 시에도 DYNAMIC 섹션에 삽입)
     // 조건: injectedSummary 존재 (handlers.js가 30분+ 경과 시에만 전달)
     if (injectedSummary) {
@@ -900,7 +937,7 @@ export async function* createClaudeSession(prompt, {
   const model = contextBudget === 'small' ? MODELS.small : 'opusplan';
 
   // 7. Load MCP server config (same servers, now as SDK mcpServers object)
-  // 우선순위: discord-mcp.json > ~/.mcp.json (nexus, serena만 필터)
+  // 우선순위: discord-mcp.json > ~/.mcp.json (nexus, serena, serena-board 필터)
   // ${ENV_VAR} 형식의 env var를 실제 값으로 치환 지원 (GITHUB_TOKEN 등)
   let mcpServers = {};
   try {
@@ -909,7 +946,7 @@ export async function* createClaudeSession(prompt, {
     mcpServers = (JSON.parse(rawMcp)).mcpServers ?? {};
   } catch {
     // discord-mcp.json 없으면 ~/.mcp.json에서 봇에 필요한 서버만 필터링
-    const BOT_MCP_ALLOWLIST = ['nexus', 'serena'];
+    const BOT_MCP_ALLOWLIST = ['nexus', 'serena', 'serena-board'];
     try {
       const globalMcp = JSON.parse(readFileSync(join(HOME, '.mcp.json'), 'utf-8'));
       const allServers = globalMcp.mcpServers ?? {};
@@ -949,9 +986,58 @@ export async function* createClaudeSession(prompt, {
       'mcp__serena__read_memory', 'mcp__serena__write_memory', 'mcp__serena__find_file',
       'mcp__serena__replace_symbol_body', 'mcp__serena__insert_after_symbol',
       'mcp__serena__insert_before_symbol',
+      // serena-board: jarvis-board 워크스페이스 (자비스맵 등 코드 접근)
+      'mcp__serena-board__check_onboarding_performed',
+      'mcp__serena-board__find_symbol', 'mcp__serena-board__get_symbols_overview',
+      'mcp__serena-board__search_for_pattern', 'mcp__serena-board__find_referencing_symbols',
+      'mcp__serena-board__read_memory', 'mcp__serena-board__write_memory', 'mcp__serena-board__find_file',
+      'mcp__serena-board__replace_symbol_body', 'mcp__serena-board__insert_after_symbol',
+      'mcp__serena-board__insert_before_symbol',
     ],
-    permissionMode: 'bypassPermissions',
-    allowDangerouslySkipPermissions: true,
+    // Phase 0 Sensor (재설계 2026-04-17): canUseTool → PreToolUse 훅 전환.
+    // 이유: SDK 'default' 모드에서 내부 'allow' 판정된 tool은 canUseTool 콜백을
+    //      아예 호출하지 않아 Read/Glob/Grep 등 대부분 tool에 대한 민감 경로 검사
+    //      bypass 가능. PreToolUse 훅은 SDK 내부 판정과 무관하게 모든 tool에 발화.
+    permissionMode: 'default',
+    hooks: {
+      PreToolUse: [{
+        hooks: [async (input) => {
+          try {
+            const blocked = checkSensitivePath(input.tool_name, input.tool_input);
+            if (blocked) {
+              log('warn', 'PreToolUse: denied (sensitive path)', {
+                tool: input.tool_name, blocked: String(blocked).slice(0, 160),
+              });
+              try {
+                const ledgerDir = join(HOME, 'jarvis/runtime', 'state');
+                mkdirSync(ledgerDir, { recursive: true });
+                appendFileSync(
+                  join(ledgerDir, 'permission-denied.jsonl'),
+                  JSON.stringify({
+                    ts: new Date().toISOString(),
+                    source: 'discord-bot',
+                    tool: input.tool_name,
+                    blocked: String(blocked).slice(0, 160),
+                  }) + '\n'
+                );
+              } catch { /* ledger best-effort */ }
+              return {
+                hookSpecificOutput: {
+                  hookEventName: 'PreToolUse',
+                  permissionDecision: 'deny',
+                  permissionDecisionReason: `민감 경로 차단: ${String(blocked).slice(0, 120)}`,
+                },
+              };
+            }
+          } catch (err) {
+            // 훅 자체 오류 시 fail-open (봇 먹통 방지 우선). 로그로 감지 가능하게 기록.
+            log('error', 'PreToolUse hook threw (fail-open)', { error: err?.message });
+          }
+          return { continue: true };
+        }],
+        timeout: 5,
+      }],
+    },
     mcpServers,
     maxTurns,
     model,
@@ -1106,7 +1192,6 @@ export async function* createClaudeSession(prompt, {
   } catch (err) {
     if (!signal?.aborted) {
       log('error', 'createClaudeSession: unexpected error', { error: err.message });
-      console.error('[CLAUDE-DEBUG] full error:', err);
       yield { type: 'result', result: '', is_error: true, error: err.message };
     }
   }

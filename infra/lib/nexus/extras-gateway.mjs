@@ -10,6 +10,30 @@ import { promisify } from 'node:util';
 import { readFile, appendFile, open as fsOpen, stat as fsStat } from 'node:fs/promises';
 import { mkResult, mkError, logTelemetry, BOT_HOME } from './shared.mjs';
 import { listTasks, getTask } from '../task-store.mjs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { addFactToWiki } from '../../discord/lib/wiki-engine.mjs';
+
+// ---------------------------------------------------------------------------
+// 채널 피드 기록 — discordSend 발신 시 ~/jarvis/runtime/state/channel-feed/{name}.jsonl 에 append
+// discord-bot 프로세스와 분리된 nexus 프로세스이므로 독립 구현 (import 불가)
+// ---------------------------------------------------------------------------
+const _FEED_DIR = join(homedir(), 'jarvis/runtime', 'state', 'channel-feed');
+const _FEED_MAX = 30;
+
+function _appendChannelFeed(channelName, text) {
+  if (!channelName || !text?.trim()) return;
+  try {
+    mkdirSync(_FEED_DIR, { recursive: true });
+    const fp = join(_FEED_DIR, `${channelName}.jsonl`);
+    const now = new Date();
+    const kst = new Date(now.getTime() + 9 * 3600 * 1000);
+    const ts = kst.toISOString().replace('T', ' ').slice(0, 16) + ' KST';
+    appendFileSync(fp, JSON.stringify({ ts, from: 'cron', text: text.slice(0, 2000) }) + '\n', 'utf-8');
+    // 롤링 트림
+    const lines = readFileSync(fp, 'utf-8').split('\n').filter(Boolean);
+    if (lines.length > _FEED_MAX) writeFileSync(fp, lines.slice(-_FEED_MAX).join('\n') + '\n', 'utf-8');
+  } catch { /* best-effort */ }
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -146,6 +170,20 @@ export const TOOLS = [
     },
     annotations: { title: 'Nexus Stats', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
+  {
+    name: 'wiki_add_fact',
+    description: '사실 1개를 Jarvis 위키의 {domain}/_facts.md 에 즉시 주입. 표면(디스코드/Claude Code CLI/macOS 앱)에 무관하게 같은 뇌에 쓰기. 도메인은 키워드 기반으로 자동 감지되며 필요 시 override 가능. source 태그로 사후 감사 지원. 오너의 명시적 "기억해" 요청이나 대화 중 확정된 사실·결정·선호 포착 시 사용.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fact: { type: 'string', description: '기억할 사실 1줄 (짧고 검색 가능한 단위, 5~160자 권장).' },
+        domain: { type: 'string', description: '(선택) 도메인 명시. 생략 시 키워드 기반 자동 감지 (career/ops/tech/finance/personal 등).' },
+        source: { type: 'string', description: '(선택) 주입 표면 태그. 예: "claude-code-cli", "claude-app", "claude-code-remember". 기본값 "mcp-client".' },
+      },
+      required: ['fact'],
+    },
+    annotations: { title: 'Wiki Add Fact', readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -180,6 +218,8 @@ async function discordSend({ channel, message }) {
   }
 
   const data = await res.json();
+  // 채널 피드 기록 — 크론/스크립트가 보낸 메시지를 세션 컨텍스트에 반영
+  _appendChannelFeed(channel, message);
   return { ok: true, message_id: data.id, channel, channel_id: channelId };
 }
 
@@ -362,6 +402,37 @@ async function nexusStats({ n = 500 } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// wiki_add_fact — Jarvis 위키에 사실 1개 즉시 주입 (표면 통합 메모리 Phase 2)
+// ---------------------------------------------------------------------------
+
+/** 사실 1개를 wiki-engine의 addFactToWiki로 주입. 표면 구분을 위한 source 태깅. */
+async function wikiAddFactTool({ fact, domain, source }) {
+  if (typeof fact !== 'string') {
+    throw new Error('fact (string) required');
+  }
+  const trimmed = fact.trim();
+  if (trimmed.length < 5) {
+    throw new Error('fact too short (min 5 chars)');
+  }
+  if (trimmed.length > 500) {
+    throw new Error('fact too long (max 500 chars) — 짧고 검색 가능한 단위로 분할 필요');
+  }
+
+  const opts = { source: (typeof source === 'string' && source.trim()) ? source.trim() : 'mcp-client' };
+  if (typeof domain === 'string' && domain.trim()) {
+    opts.domainOverride = domain.trim();
+  }
+
+  const writtenDomain = addFactToWiki(null, trimmed, opts);
+  return {
+    status: 'ok',
+    domain: writtenDomain,
+    source: opts.source,
+    fact: trimmed.slice(0, 120) + (trimmed.length > 120 ? '...' : ''),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Route handler
 // ---------------------------------------------------------------------------
 export async function handle(name, args, start) {
@@ -369,6 +440,7 @@ export async function handle(name, args, start) {
     discord_send: discordSend, run_cron: runCron, get_memory: getMemory,
     list_crons: listCrons, dev_queue: devQueue, context_bus: contextBus,
     emit_event: emitEvent, usage_stats: usageStats, nexus_stats: nexusStats,
+    wiki_add_fact: wikiAddFactTool,
   };
   if (!(name in handlers)) return null;
 
@@ -381,6 +453,7 @@ export async function handle(name, args, start) {
     else if (name === 'get_memory') { meta.query = args?.query?.slice(0, 60); }
     else if (name === 'list_crons') { meta.filter = args?.filter; }
     else if (name === 'emit_event') { meta.event = args?.event; }
+    else if (name === 'wiki_add_fact') { meta.fact = args?.fact?.slice(0, 60); meta.source = args?.source; meta.domain = args?.domain; }
     logTelemetry(name, Date.now() - start, meta);
     return mkResult(JSON.stringify(result, null, 2));
   } catch (err) {

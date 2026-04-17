@@ -11,7 +11,7 @@
 
 `~/jarvis` is the **infra-heavy half** of the Jarvis ecosystem. It contains:
 
-- 82 scheduled tasks (crons + event-triggered)
+- ~90+ scheduled tasks (crons + event-triggered) — exact count in `tasks-index.json.totalTasks`
 - A 24/7 Discord bot
 - A RAG knowledge base (LanceDB + Ollama hybrid)
 - `ask-claude.sh` — the LLM gateway used by every cron
@@ -70,7 +70,7 @@ Runtime state (not in repo):
 
 ### Cron scheduler
 
-- **SSoT**: `~/.jarvis/config/tasks.json` (82 tasks)
+- **SSoT**: `~/jarvis/runtime/config/tasks.json` (task count in `tasks-index.json.totalTasks`)
 - **Runner**: `infra/lib/task-store.mjs` + shell wrappers under `infra/scripts/`
 - **Gateway**: Every LLM task goes through `infra/lib/llm-gateway.sh` → `ask-claude.sh`
 - **Budgets**: `maxBudget` per task + `team-budget.json` per team cap + daily global cap
@@ -171,3 +171,4 @@ Then read the specific script with Serena (`find_symbol`, `get_symbols_overview`
 - Don't Read 1,500+ line files without trying Serena first (`find_symbol` / `get_symbols_overview`)
 - Don't commit `.env`, `jira.env`, `tutoring.env`, `google-calendar-token.json`, or anything under `~/.jarvis/config/secrets/`
 - Don't add a new team by creating a keyword list here — edit `~/jarvis-board/lib/map/team-registry.ts` first
+

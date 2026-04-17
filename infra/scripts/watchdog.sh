@@ -5,9 +5,9 @@ set -euo pipefail
 # KeepAlive launchd service with internal 180s loop. Monitors discord-bot, cleans stale claude -p.
 
 # --- Configuration ---
-BOT_HOME="${BOT_HOME:-${HOME}/.jarvis}"
+BOT_HOME="${BOT_HOME:-${HOME}/jarvis/runtime}"
 # Cross-platform compat
-source "${JARVIS_HOME:-${BOT_HOME:-${HOME}/.local/share/jarvis}}/lib/compat.sh" 2>/dev/null || true
+source "${JARVIS_HOME:-${BOT_HOME:-${HOME}/jarvis/runtime}}/lib/compat.sh" 2>/dev/null || true
 source "${BOT_HOME}/lib/log-utils.sh" 2>/dev/null || true
 STATE_DIR="$BOT_HOME/watchdog"
 LOG_FILE="$BOT_HOME/logs/watchdog.log"
@@ -37,9 +37,14 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
 
 send_alert() {
     local message="$1"
+    local severity="${2:-warning}"  # warning | critical
     log "ALERT: $message"
     if [[ -x "$ROUTE_RESULT" ]]; then
         "$ROUTE_RESULT" discord "watchdog" "$message" "jarvis-system" 2>/dev/null || true
+        # CRITICAL은 오너 채널(jarvis-ceo)에도 전송 — jarvis-system만으로는 놓침
+        if [[ "$severity" == "critical" ]]; then
+            "$ROUTE_RESULT" discord "watchdog" "🚨 $message" "jarvis-ceo" 2>/dev/null || true
+        fi
     fi
     # ntfy 직접 전송 — Discord 봇 다운·크래시 루프 중에도 폰 알림 도달
     local _ntfy_topic
@@ -65,6 +70,18 @@ detect_crash_loop() {
     echo "$current_pid" > "$pid_file"
 
     if [[ -n "$prev_pid" && "$current_pid" != "$prev_pid" ]]; then
+        # ▶ FIX: "모니터링 모드" 재시작은 정상이므로 크래시 루프로 판단하지 않음
+        local preflight_log="$BOT_HOME/logs/preflight.log"
+        if [[ -f "$preflight_log" ]]; then
+            # 최근 로그에 "모니터링 모드" 로그가 있는지 확인
+            if tail -100 "$preflight_log" 2>/dev/null | grep -q "봇 시작 (모니터링 모드)"; then
+                log "정상 재시작 감지: preflight 모니터링 모드 — 크래시 루프 판정 제외"
+                # restart-times 초기화하여 다음 주기에 다시 카운트 시작
+                true > "$restart_log"
+                return
+            fi
+        fi
+
         # PID 바뀜 → 재시작 이벤트 기록
         date +%s >> "$restart_log"
         # 오래된 항목 제거 (30분 초과)
@@ -83,7 +100,7 @@ detect_crash_loop() {
                 | grep -iE "Error:|TypeError|SyntaxError|Cannot find|ENOENT|FATAL" \
                 | tail -1 || echo "로그 없음")
             # 에러 유무 무관 알림 + bot-heal.sh 트리거
-            send_alert "[Bot Watchdog] CRASH LOOP: ${restart_count}회 재시작 (30분 내). 에러: ${last_error}"
+            send_alert "[Bot Watchdog] CRASH LOOP: ${restart_count}회 재시작 (30분 내). 에러: ${last_error}" "critical"
             # 자가치유 시도 (heal-in-progress 락이 없을 때만)
             if [[ ! -f "$BOT_HOME/state/heal-in-progress" ]]; then
                 log "CRASH LOOP: bot-heal.sh 트리거"
@@ -445,6 +462,12 @@ run_one_check() {
             pid="${bot_status#RUNNING:}"
             memory_mb=$(check_memory "$pid")
             health_status="healthy"
+            # Degraded Mode 자동 복구 — 봇 정상 실행 중이면 해제
+            local _deg_script="$BOT_HOME/scripts/bot-degraded-mode.sh"
+            if [[ -x "$_deg_script" ]] && ! bash "$_deg_script" status >/dev/null 2>&1; then
+                log "봇 정상 확인 — Degraded Mode 자동 복구 시도"
+                bash "$_deg_script" recover >> "$LOG_FILE" 2>&1 || true
+            fi
             # 크래시 루프 감지 (PID 변경 빈도 추적)
             detect_crash_loop "$pid"
 
@@ -508,7 +531,7 @@ run_one_check() {
 
                     # 에러율 100% → 코드 버그 확정, 자동 heal + 재시작
                     if (( _total_c > 0 && _err_c == _total_c )); then
-                        send_alert "[Bot Watchdog] FATAL: handleMessage 에러율 100% (${_err_c}/${_total_c}). 코드 버그 — 자동 heal 후 재시작"
+                        send_alert "[Bot Watchdog] FATAL: handleMessage 에러율 100% (${_err_c}/${_total_c}). 코드 버그 — 자동 heal 후 재시작" "critical"
                         echo "$_now_ts" > "$_alert_last"
                         # bot-heal.sh로 자동 수정 시도
                         local _last_err
@@ -555,6 +578,17 @@ for l in sys.stdin:
             increment_crash
             crash_count=$(get_crash_count)
 
+            # 자가 복구 방해 요인 진단: preflight/symlink 건전성 검증
+            local _diag_issues=""
+            [[ ! -f "$BOT_HOME/scripts/bot-preflight.sh" ]] && _diag_issues="${_diag_issues}\n- bot-preflight.sh 없음"
+            [[ ! -f "$BOT_HOME/discord/discord-bot.js" ]] && _diag_issues="${_diag_issues}\n- discord-bot.js 없음"
+            [[ ! -f "$BOT_HOME/discord/.env" ]] && _diag_issues="${_diag_issues}\n- discord/.env 없음"
+            [[ ! -f "$BOT_HOME/bin/cron-safe-wrapper.sh" ]] && _diag_issues="${_diag_issues}\n- cron-safe-wrapper.sh 없음"
+            if [[ -n "$_diag_issues" ]]; then
+                log "CRITICAL: 자가 복구 방해 요인 감지:${_diag_issues}"
+                send_alert "🚨 **봇 자가 복구 불가** — 필수 파일/symlink 누락:${_diag_issues}\n수동 복구 필요: symlink 재생성 또는 deploy 실행"
+            fi
+
             # [ON-DEMAND HOOK] bot.crashed 이벤트 발행 → bot-crash-classifier 태스크 트리거 (debounce 300s)
             "$BOT_HOME/scripts/emit-event.sh" "bot.crashed" \
                 "{\"status\":\"${bot_status}\",\"crash_count\":${crash_count}}" \
@@ -576,11 +610,11 @@ for l in sys.stdin:
                             | grep -iE "Error:|TypeError|SyntaxError|Cannot find|ENOENT|FATAL" \
                             | tail -1 || echo "로그 없음")
                         log "FATAL: MAX_RETRIES 도달 → bot-heal.sh 트리거 (에러: ${bot_err_last})"
-                        send_alert "[Bot Watchdog] FATAL: Discord bot crashed ${crash_count} times. 자동복구 시도 중..."
+                        send_alert "[Bot Watchdog] FATAL: Discord bot crashed ${crash_count} times. 자동복구 시도 중..." "critical"
                         nohup bash "$BOT_HOME/scripts/bot-heal.sh" "MAX_RETRIES ${crash_count}회: ${bot_err_last}" \
                             >> "$BOT_HOME/logs/bot-heal.log" 2>&1 &
                     else
-                        send_alert "[Bot Watchdog] FATAL: Discord bot crashed ${crash_count} times. (heal 진행 중)"
+                        send_alert "[Bot Watchdog] FATAL: Discord bot crashed ${crash_count} times. (heal 진행 중)" "critical"
                     fi
                     echo "$now_ts" > "$fatal_last"
                 else

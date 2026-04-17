@@ -1,5 +1,9 @@
 # Jarvis
 
+> **⚠️ 마이그레이션 공지 (2026-04-17)**: 런타임 데이터 위치 변경 `~/.jarvis/` → `~/jarvis/runtime/`.
+> 기존 설치: `~/.jarvis` 는 **2026-10-17까지** 호환성 심링크로 유지.
+> 신규 설치: `~/jarvis/runtime/` 직접 사용. [docs/A2-MIGRATION.md](infra/docs/A2-MIGRATION.md) (작성 예정).
+
 <p align="center">
   <strong>24/7 스스로 관리되는 AI 운영 플랫폼</strong><br>
   Discord 봇 + RAG 지식 베이스 + 인사이트 레이어 + 자가 복구 자동화
@@ -41,7 +45,9 @@ API 과금 없이 Claude 구독만으로 돌아갑니다. 데이터는 100% 내 
 |:---:|------|------|
 | **접점** | Discord (텍스트 + 음성) | 24/7 대화 인터페이스. 16+ 슬래시 커맨드, 버튼, 음성 인식 |
 | **두뇌** | Claude + 8개 AI 에이전트 팀 | 대화, 분석, 코드 작성, 의사결정 |
-| **기억** | RAG (LanceDB) + 인사이트 레이어 | 10,000+ 문서 검색 + 매일 행동 메트릭 자동 분석 |
+| **하네스** | Prompt Harness + Progressive Compaction + Session Handoff | 계층형 프롬프트 로딩 (토큰 77% 절약), 3단계 컨텍스트 관리 (40K/60K/80K), 세션 간 구조화된 상태 전달 |
+| **기억** | RAG (LanceDB) + **LLM Wiki** + 인사이트 레이어 + **중요도 게이트** | 10,000+ 문서 검색 + Stateful 위키 + 행동 메트릭 + Mem0 패턴 점수 기반 필터링 (score ≥ 3만 저장) |
+| **방어** | BoundedMap + Error Ledger + API Semaphore + Failure Rule Engine | 메모리 누수 방지, 에러 원장, API 동시 호출 보호, 실패 패턴 자동 학습 |
 | **자동화** | 99 스크립트 + 40+ 크론 (macOS: LaunchAgent, Linux: PM2) | 자가 복구, 새벽 감사, 뉴스 브리핑, 코드 자동 실행 |
 | **연동** | MCP + Google Calendar + GitHub | 외부 서비스 통합 |
 
@@ -52,10 +58,14 @@ API 과금 없이 Claude 구독만으로 돌아갑니다. 데이터는 100% 내 
 | 💬 | **Discord 봇** | 24/7 채팅. 스트리밍 응답, 음성 인식(Whisper STT), 채널별 페르소나, 16+ 슬래시 커맨드 |
 | 👥 | **멀티유저** | 유저별 격리된 메모리, 페어링 코드로 신규 유저 등록, 가족 모드(프라이버시 경계) |
 | 📚 | **RAG 지식 베이스** | 장기 기억. BM25 + 벡터 하이브리드 검색, 10,000+ 문서 |
+| 🗂️ | **LLM Wiki** | [Karpathy 3-layer 패턴](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (Raw/Wiki/Schema) 기반. 4개 인제스트 경로: 실시간 키워드 라우팅, 백그라운드 LLM 소화(Haiku), 야간 배치 합성(03:30), 주간 린트(일요일 04:00). 도메인 위키(`career`/`trading`/`ops`/`knowledge`) + 사용자별 페이지. Discord봇·Board API·Map NPC가 위키를 참조. 지식이 복리로 축적 — 새 정보가 기존 페이지를 업데이트 |
 | 🧠 | **인사이트 레이어** | 매일 자동 생성되는 행동 분석 리포트 — 활동 추세, 집중 전환, 상황 맥락 감지 |
 | 📋 | **Dev-Queue** | AI가 추출한 작업 항목을 자동 큐잉 → `jarvis-coder.sh`가 자동 실행 — 손 안 대고 개발 |
 | 🤖 | **8개 AI 팀** | Council, Infra, Record, Brand, Career, Academy, Trend, Recon — 전문 에이전트 |
 | 🔧 | **자가 복구** | 워치독 자동 재시작, LaunchAgent 가디언(3분), 새벽 코드 감사, 크론 실패 추적 |
+| 🏗️ | **프롬프트 하네스** | [Anthropic 하네스 엔지니어링](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) — Tier 0(핵심, 항상 <3KB) / Tier 1(맥락적, 키워드 트리거). Progressive Compaction 40K/60K/80K 3단계. 시스템 프롬프트 77% 감소 |
+| 🛡️ | **방어 레이어** | BoundedMap(메모리 누수 방지), Error Ledger(JSONL 에러 원장), API Semaphore(동시 호출 보호), Failure Rule Engine(실패 패턴 자동 학습), Symlink Health Check(매시간 검증) |
+| 📢 | **알림 포맷터** | 크론 메시지에 자동 헤더(`> 🟢/🟡/🔴 태스크명 · HH:MM KST`), 노이즈 게이트(순수 성공 전송 생략), 심각도 기반 Discord Embed(Uptime Kuma 패턴) |
 | 🔒 | **100% 로컬** | 클라우드 없음. 구독 없음. 모든 데이터가 내 컴퓨터에 |
 | 🔌 | **MCP 연동** | Home Assistant, GitHub, Slack, Notion 등 [MCP 생태계](https://github.com/topics/mcp-server) |
 
@@ -63,7 +73,7 @@ API 과금 없이 Claude 구독만으로 돌아갑니다. 데이터는 100% 내 
 
 |  | **Jarvis** | **Claude Memory** | **ChatGPT Memory** | **[OpenClaw](https://docs.openclaw.ai) Dreaming** |
 |---|:---:|:---:|:---:|:---:|
-| **메모리 구조** | RAG + 인사이트 레이어 (메트릭 기반) | 파일 기반 (CLAUDE.md + Auto Dream) | 전량 주입 (모든 메모리를 매번 로드) | 3단계 수면 사이클 (Light → REM → Deep) |
+| **메모리 구조** | RAG + **LLM Wiki** + 인사이트 레이어 (메트릭 기반) | 파일 기반 (CLAUDE.md + Auto Dream) | 전량 주입 (모든 메모리를 매번 로드) | 3단계 수면 사이클 (Light → REM → Deep) |
 | **트렌드 감지** | O (토픽 빈도 변화, 엔티티 모멘텀) | X | X | O (REM 단계에서 패턴 추출) |
 | **자동화/크론** | 99 스크립트 + 자가 복구 | X (CLI 도구) | X | 크론 1개 (dreaming sweep) |
 | **자율 코딩** | O (Dev-Queue → jarvis-coder) | X | X | X |
@@ -87,28 +97,79 @@ API 과금 없이 Claude 구독만으로 돌아갑니다. 데이터는 100% 내 
 
 ## 빠른 시작
 
+### 어떤 구성을 선택할까?
+
+| 구성 | 기능 | AI 요구사항 | 비용 |
+|------|------|-----------|------|
+| **표준** | Discord 봇 + 80개 크론 자동화 | Claude Max 또는 Pro 구독 | $20/월(Pro) 또는 $100/월(Max) |
+| **풀** | 표준 + RAG 장기 기억 | Claude 구독 + Ollama (무료, 로컬) | 동일 + 0 |
+
+> **Claude Max** = 무제한, 24/7 봇 운영에 최적. **Claude Pro** = 정상 작동하나 사용량 많으면 제한 걸릴 수 있음.
+> **Ollama** = 무료 오픈소스 AI, 로컬에서 실행. RAG(문서 검색 + 기억) 전용. 봇 자체는 Claude로 동작.
+
+---
+
+### 0단계: 사전 준비
+
+1. **Claude Code CLI** (두뇌)
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   claude   # 브라우저가 열리면 Anthropic 계정으로 로그인
+   ```
+2. **Node.js 22+** 와 **Python 3.10+**
+   ```bash
+   node -v   # 22 이상이어야 함
+   python3 --version
+   ```
+
+### 1단계: Discord 봇 토큰 발급
+
+> 이미 토큰이 있으면 2단계로 건너뛰세요.
+
+1. [Discord 개발자 포털](https://discord.com/developers/applications) 접속
+2. **"New Application"** 클릭 → 이름 입력 (예: "Jarvis") → **Create**
+3. 왼쪽 메뉴 → **"Bot"** 탭 → **"Reset Token"** 클릭 → **토큰 복사** (저장해두세요!)
+4. 아래로 스크롤 → **"Message Content Intent"** 토글 ON → Save
+5. 왼쪽 메뉴 → **"OAuth2"** → **"URL Generator"**:
+   - Scopes: `bot`, `applications.commands`
+   - Bot permissions: `Send Messages`, `Read Message History`, `Attach Files`, `Use Slash Commands`
+6. 생성된 URL 복사 → 브라우저에서 열기 → 봇을 내 Discord 서버에 초대
+
+### 2단계: 클론 & 셋업
+
 ```bash
 git clone https://github.com/Ramsbaby/jarvis.git && cd jarvis
+python scripts/setup_infra.py    # Discord 토큰 입력하라고 나오면 1단계에서 복사한 것 붙여넣기
 ```
 
-### 1단계: RAG — 장기 기억
+셋업 마법사가 자동으로:
+- Node.js 확인, 데이터 디렉토리 생성
+- **Discord 봇 토큰** 입력 요청 (1단계에서 복사한 것)
+- 의존성 설치 및 봇 설정
+
+> **상세 가이드**: [`infra/CLAUDE-SETUP-GUIDE.md`](infra/CLAUDE-SETUP-GUIDE.md) — MCP 서버, 페르소나, 컨텍스트 설정, 문제 해결
+
+### 3단계: RAG — 장기 기억 (선택, 권장)
+
+자비스가 과거 대화와 문서를 검색할 수 있게 해줍니다.
 
 ```bash
-python scripts/setup_rag.py
+# 먼저 Ollama 설치 (무료, 로컬 AI — 임베딩 전용)
+# macOS:
+brew install ollama && ollama serve
+
+# Linux:
+curl -fsSL https://ollama.com/install.sh | sh && ollama serve
+
+# RAG 셋업 실행:
+python scripts/setup_rag.py    # ~400MB 임베딩 모델 다운로드, 2-5분 소요
 ```
 
-> **필요**: [Ollama](https://ollama.com/download), Node.js 18+
+### 플랫폼별 시작
 
-### 2단계: Discord 봇 + 자동화
+**macOS** — LaunchAgent로 자동 시작 (setup_infra.py가 설정함)
 
-```bash
-python scripts/setup_infra.py
-```
-
-> **필요**: Node.js 18+, Discord 봇 토큰
-
-### WSL2 / Linux — PM2로 시작
-
+**WSL2 / Linux** — PM2 사용:
 ```bash
 npm install -g pm2
 pm2 start infra/ecosystem.config.cjs
@@ -165,9 +226,50 @@ Discord에 파일을 드롭하면 자동으로 RAG에 인덱싱됩니다. 채팅
 - 채널별 **페르소나** — 채널마다 다른 성격 (`personas.json`)
 - **메시지 디바운싱** — 연속 메시지를 묶어서(1.5초) 단일 Claude 호출
 
-## RAG 지식 베이스 + 인사이트 레이어
+## 메모리 아키텍처
 
-두 레이어가 함께 동작 — RAG가 사실을 검색하고, 인사이트 레이어가 맥락을 이해합니다.
+세 레이어가 함께 동작 — LLM Wiki가 구조화된 지식을 축적하고, RAG가 원본 컨텍스트를 검색하며, 인사이트 레이어가 행동 패턴을 이해합니다.
+
+```
+🗂️  LLM Wiki (매일 소화)              📚 RAG 레이어 (쿼리별)           📊 인사이트 레이어 (매일)
+  profile.md / work.md /               10,000+ 문서에서                  "커리어 토픽 534배 급증"
+  trading.md / projects.md             시맨틱 검색                        "면접 준비로 집중 전환"
+  (Stateful — 페이지가 업데이트됨,              │                                   │
+   단순 추가가 아님)                           │                                   │
+              │                               │                                   │
+              └───────────────┬───────────────┘───────────────────────────────────┘
+                              ▼
+                     Claude가 현재 상황을 파악한 채 응답
+```
+
+### LLM Wiki
+
+[Andrej Karpathy의 LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)에서 영감받아 구현. 대화 세션을 **Stateful하고 복리로 축적되는 지식 베이스**로 변환합니다.
+
+| | 전통 RAG | LLM Wiki |
+|---|---|---|
+| **저장 방식** | 원본 텍스트 청크 | 구조화된 `.md` 위키 페이지 |
+| **상태** | Stateless (매 쿼리 재검색) | Stateful (페이지가 업데이트됨) |
+| **처리 방식** | 인덱스 → 검색 | Claude Haiku 소화 → 기존 페이지 통합 |
+| **지식 성장** | 독립적 누적 | 복리 — 새 정보가 기존 지식을 업데이트 |
+
+**7개 위키 카테고리** (`~/.jarvis/wiki/pages/{userId}/`):
+
+| 페이지 | 저장 내용 |
+|--------|----------|
+| `profile.md` | 이름, 직업, 가족 기본 정보 |
+| `work.md` | 기술 스택, 회사, 커리어 목표 |
+| `trading.md` | 포트폴리오, 투자 전략, 관심 종목 |
+| `projects.md` | 진행 중인 프로젝트 (Jarvis 봇, 사이드 프로젝트) |
+| `preferences.md` | 습관, 선호도, 루틴 |
+| `health.md` | 운동, 건강, 수면 패턴 |
+| `travel.md` | 여행 기록 및 계획 |
+
+**작동 방식**: 매일 새벽 3시, session-summarizer가 오늘 대화를 Claude Haiku로 소화 → 적절한 위키 페이지에 라우팅 → 기존 내용과 병합 업데이트 → 다음 세션 시스템 프롬프트에 위키 컨텍스트 주입.
+
+### RAG 지식 베이스 + 인사이트 레이어
+
+두 추가 레이어 — RAG가 원본 사실을 검색하고, 인사이트 레이어가 맥락을 이해합니다.
 
 ```
 📊 인사이트 레이어 (매일, ~1.2KB)                📚 RAG 레이어 (쿼리별)
@@ -284,6 +386,9 @@ jarvis/
 │   └── bin/             # 인덱서, 메트릭, 디스틸러, 수리
 ├── infra/               # 인프라 & 자동화
 │   ├── discord/         # Discord 봇 + 30개 핸들러
+│   │   └── lib/
+│   │       ├── wiki-engine.mjs    # LLM Wiki CRUD + 7개 카테고리 스키마
+│   │       └── wiki-ingester.mjs  # Claude Haiku 세션 소화 파이프라인
 │   ├── lib/             # 핵심 라이브러리 (MCP, task-store, insight-extractor)
 │   ├── bin/             # 크론 실행 (jarvis-cron, jarvis-coder, bot-cron)
 │   ├── scripts/         # 감사, E2E 테스트, 코드 리뷰, 배포
@@ -292,6 +397,15 @@ jarvis/
 │   └── templates/       # 크론 & LaunchAgent 템플릿
 ├── scripts/             # 셋업 위자드
 └── docs/img/            # 스크린샷
+```
+
+**런타임 위키 저장 경로** (`~/.jarvis/wiki/`):
+```
+~/.jarvis/wiki/
+  schema.json            # 위키 구조 규칙
+  pages/{userId}/
+    profile.md / work.md / trading.md / projects.md
+    preferences.md / health.md / travel.md
 ```
 
 <details>

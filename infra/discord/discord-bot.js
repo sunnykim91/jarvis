@@ -38,7 +38,7 @@ import { closeRagEngine } from './lib/rag-helper.js';
 // ---------------------------------------------------------------------------
 
 const HOME = homedir();
-const BOT_HOME = join(process.env.BOT_HOME || join(HOME, '.jarvis'));
+const BOT_HOME = join(process.env.BOT_HOME || join(HOME, 'jarvis/runtime'));
 const SESSIONS_PATH = join(BOT_HOME, 'state', 'sessions.json');
 const RATE_TRACKER_PATH = join(BOT_HOME, 'state', 'rate-tracker.json');
 const MAX_CONCURRENT = 3;
@@ -153,7 +153,7 @@ async function registerSlashCommands(clientId, guildId) {
     });
     log('info', 'Slash commands registered', { guildId });
   } catch (err) {
-    log('error', 'Failed to register slash commands', { error: err.message, code: err.code, status: err.status, rawError: err.rawError });
+    log('error', 'Failed to register slash commands', { error: err.message });
   }
 }
 
@@ -168,6 +168,7 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMessageReactions,
   ],
+  allowedMentions: { repliedUser: false },
 });
 
 let lastMessageAt = Date.now();
@@ -232,7 +233,7 @@ client.once('clientReady', async () => {
         reason = data.reason || 'unknown';
         if (data.requestedRestart) reason = 'requested';
         // 재시작 알림은 jarvis 메인 채널로만
-        notifyChannels = [process.env.OWNER_ALERT_CHANNEL_ID || ''];
+        notifyChannels = [process.env.OWNER_ALERT_CHANNEL_ID || '1468386844621144065'];
       }
     } catch {
       // restart-notify.json 없음 → heartbeat로 비정상 종료 추정
@@ -284,7 +285,7 @@ client.once('clientReady', async () => {
       // 비정상 종료(크래시/watchdog kill)이고 활성 채널이 없을 때 → 메인채널에 알림
       if (!isGraceful && notifyChannels.length === 0 && !suppressApology) {
         try {
-          const ownerAlertId = process.env.OWNER_ALERT_CHANNEL_ID || '';
+          const ownerAlertId = process.env.OWNER_ALERT_CHANNEL_ID || '1468386844621144065';
           const ch = client.channels.cache.get(ownerAlertId) || await client.channels.fetch(ownerAlertId).catch(() => null);
           if (ch?.isTextBased()) {
             await ch.send(`-# 🔄 재시작됨 — 이전 대화 맥락은 세션 요약으로 복구됩니다. (${reasonLabel})`).catch(() => {});

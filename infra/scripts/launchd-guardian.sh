@@ -5,9 +5,9 @@ set -euo pipefail
 # Runs every 3 minutes via cron. Detects unloaded launchd services and re-registers them.
 # Ensures critical LaunchAgents remain registered after system sleep or restart.
 
-BOT_HOME="${BOT_HOME:-${HOME}/.jarvis}"
+BOT_HOME="${BOT_HOME:-${HOME}/jarvis/runtime}"
 # Cross-platform compat
-source "${JARVIS_HOME:-${BOT_HOME:-${HOME}/.local/share/jarvis}}/lib/compat.sh" 2>/dev/null || true
+source "${JARVIS_HOME:-${BOT_HOME:-${HOME}/jarvis/runtime}}/lib/compat.sh" 2>/dev/null || true
 
 # launchd-guardian is macOS-only; exit gracefully on other platforms
 if ! $IS_MACOS; then
@@ -22,10 +22,15 @@ UID_NUM=$(id -u)
 KEEPALIVE_SERVICES=(
     "ai.jarvis.discord-bot"
     "ai.jarvis.watchdog"
+    "ai.jarvis.cloudflared-tunnel"
+    "ai.jarvis.board"
 )
 
 # StartInterval services: run periodically, PID=- between runs is normal
-INTERVAL_SERVICES=()
+INTERVAL_SERVICES=(
+    "ai.jarvis.symlink-audit"
+    "ai.jarvis.board-watchdog"
+)
 
 PLIST_DIR="$HOME/Library/LaunchAgents"
 
@@ -91,9 +96,17 @@ for service in "${KEEPALIVE_SERVICES[@]}"; do
 
             if [[ "$fail_count" -ge 3 && "$service" == "ai.jarvis.discord-bot" ]]; then
                 log "RECOVERY: $service failed ${fail_count}x — running npm install to repair"
-                # cron/launchd 환경에서 npm PATH 명시 (command not found 방지)
+                # launchd 환경은 PATH 미상속 → node/npm 절대경로 + PATH export 필수
+                # (bash SC2168: 'local' 키워드는 함수 외부에서 쓰면 set -e와 충돌 → 일반 변수로)
+                NODE_BIN="${NODE_BIN:-$(command -v node 2>/dev/null || echo /opt/homebrew/bin/node)}"
                 NPM_BIN="${NPM_BIN:-$(command -v npm 2>/dev/null || echo /opt/homebrew/bin/npm)}"
-                "$NPM_BIN" install --prefix "$BOT_HOME/discord" --silent 2>>"$LOG_FILE" || true
+                if [[ -x "$NODE_BIN" && -x "$NPM_BIN" ]]; then
+                    # npm 내부에서 `env node` 호출 → PATH에 node 디렉토리 필요
+                    export PATH="$(dirname "$NODE_BIN"):${PATH:-/usr/bin:/bin}"
+                    "$NPM_BIN" install --prefix "$BOT_HOME/discord" --silent 2>>"$LOG_FILE" || true
+                else
+                    log "ERROR: node($NODE_BIN) 또는 npm($NPM_BIN) 바이너리 없음 — npm install 불가"
+                fi
                 echo "0" > "$FAIL_FILE"
                 log "RECOVERY: npm install done, kickstarting"
             fi

@@ -38,7 +38,9 @@ function _cacheKey(data) {
 // lastQueryStore — sessionKey → 마지막 사용자 쿼리 (재생성/요약 버튼용)
 // handlers.js에서 import해서 set, commands.js에서 regen 시 get
 // ---------------------------------------------------------------------------
-export const lastQueryStore = new Map();
+import { BoundedMap } from './bounded-map.js';
+import { recordSilentError } from './error-ledger.js';
+export const lastQueryStore = new BoundedMap(1000, 30 * 60_000); // 1000 items, 30min TTL
 
 // ---------------------------------------------------------------------------
 // chartjs-node-canvas 싱글톤 — CHART_DATA 렌더링 (Chrome 없이 순수 Node.js)
@@ -63,6 +65,15 @@ function _getChartNodeCanvas() {
 // ---------------------------------------------------------------------------
 const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 let _chromeBrowser = null;
+
+// Chrome orphan 방지: 프로세스 종료 시 브라우저 정리
+process.on('exit', () => {
+  if (_chromeBrowser) { try { _chromeBrowser.process()?.kill(); } catch {} }
+});
+process.on('SIGTERM', () => {
+  if (_chromeBrowser) { try { _chromeBrowser.process()?.kill(); } catch {} }
+  process.exit(0);
+});
 
 async function _getChromeBrowser() {
   if (_chromeBrowser) {
@@ -98,11 +109,11 @@ function maskTechDetails(text) {
     let masked = line
       // PID 숫자 (예: "PID 1234", "pid=5678")
       .replace(/\b(PID|pid)[=\s]+\d{2,6}\b/g, '(내부 프로세스)')
-      // 절대 홈 경로 (예: /Users/username/.jarvis/..., ~/.jarvis/...)
-      .replace(/\/Users\/[^/\s]+\/\.jarvis\/[^\s,)'"]+/g, '(Jarvis 내부 경로)')
-      .replace(/~\/\.jarvis\/[^\s,)'"]+/g, '(Jarvis 내부 경로)')
-      // 절대 홈 경로 일반 (예: /Users/username/...)
-      .replace(/\/Users\/[^/\s]+\/(?!\.jarvis)[^\s,)'"]{8,}/g, '(내부 경로)');
+      // 절대 홈 경로 (예: /Users/username/.jarvis/..., ~/jarvis/runtime/...) gitleaks:allow
+      .replace(/\/Users\/[^/\s]+\/\.jarvis\/[^\s,)'"]+/g, '(Jarvis 내부 경로)') // gitleaks:allow
+      .replace(/~\/\.jarvis\/[^\s,)'"]+/g, '(Jarvis 내부 경로)') // gitleaks:allow
+      // 절대 홈 경로 일반 (예: /Users/username/...)  gitleaks:allow
+      .replace(/\/Users\/[^/\s]+\/(?!\.jarvis)[^\s,)'"]{8,}/g, '(내부 경로)'); // gitleaks:allow
     result.push(masked);
   }
   return result.join('\n');
@@ -178,7 +189,7 @@ function convertTablesToList(text) {
 }
 
 // Active placeholder tracking — persisted for orphan cleanup on restart
-const PLACEHOLDER_STATE = join(process.env.BOT_HOME || join(homedir(), '.jarvis'), 'state', 'active-placeholders.json');
+const PLACEHOLDER_STATE = join(process.env.BOT_HOME || join(homedir(), 'jarvis/runtime'), 'state', 'active-placeholders.json');
 
 function _loadPlaceholders() {
   try { return JSON.parse(readFileSync(PLACEHOLDER_STATE, 'utf-8')); } catch { return []; }
@@ -224,12 +235,14 @@ export async function cleanupOrphanPlaceholders(client) {
       const channel = await client.channels.fetch(channelId);
       if (channel) {
         const message = await channel.messages.fetch(messageId);
-        await message.delete();
-        log('info', 'cleanupOrphanPlaceholders: deleted stale placeholder', { channelId, messageId });
+        // 버튼(components) + 커서(▌) 제거만 — 메시지 내용은 유지 (삭제 금지)
+        const cleaned = (message.content || '').replace(/ ▌$/, '');
+        await message.edit({ content: cleaned || '...', components: [], embeds: [] });
+        log('info', 'cleanupOrphanPlaceholders: removed stale components from message', { channelId, messageId });
       }
     } catch (err) {
       // Message already deleted or channel inaccessible — treat as cleaned up
-      log('debug', 'cleanupOrphanPlaceholders: could not delete (already gone?)', {
+      log('debug', 'cleanupOrphanPlaceholders: could not clean (already gone?)', {
         channelId, messageId, error: err.message,
       });
     }
@@ -240,7 +253,7 @@ export async function cleanupOrphanPlaceholders(client) {
 }
 
 const STREAM_EDIT_INTERVAL_MS = 2000;
-const STREAM_MAX_CHARS = 1900;
+const STREAM_MAX_CHARS = 1700; // 포맷팅 확장(URL 래핑, 테이블→리스트) 여유 확보
 const CODE_FILE_MIN_LINES = 30;
 const LANG_EXT = {
   javascript: 'js', typescript: 'ts', python: 'py', py: 'py',
@@ -508,6 +521,9 @@ export class StreamingMessage {
   }
 
   async _flushInner() {
+    // 스트리밍 버퍼 전체에 narration filter 적용 (라인 단위 regex가 전체 텍스트에서 매칭)
+    // _sendOrEdit의 formatForDiscord는 청크 단위라 분할된 내러티브를 못 잡음
+    this.buffer = formatForDiscord(this.buffer, { channelId: this.channelId });
 
     while (this.buffer.length > STREAM_MAX_CHARS) {
       const splitAt = this._findSplitPoint(this.buffer, STREAM_MAX_CHARS);
@@ -542,10 +558,31 @@ export class StreamingMessage {
   }
 
   _findSplitPoint(text, maxLen) {
+    // 우선순위 1: ### 헤딩 경계 (섹션 단위 분할)
+    const headingRe = /\n(?=###? )/g;
+    let bestHeading = -1;
+    let m;
+    while ((m = headingRe.exec(text)) !== null) {
+      if (m.index > 0 && m.index <= maxLen) bestHeading = m.index;
+    }
+    if (bestHeading > maxLen * 0.4) return bestHeading + 1;
+
+    // 우선순위 2: --- 구분선
+    const hrIdx = text.lastIndexOf('\n---', maxLen);
+    if (hrIdx > maxLen * 0.4) return hrIdx + 1;
+
+    // 우선순위 3: 빈 줄 (단락 경계)
+    const blankIdx = text.lastIndexOf('\n\n', maxLen);
+    if (blankIdx > maxLen * 0.5) return blankIdx + 1;
+
+    // 우선순위 4: 일반 줄바꿈
     const candidate = text.lastIndexOf('\n', maxLen);
     if (candidate > maxLen * 0.6) return candidate + 1;
+
+    // 우선순위 5: 공백
     const lastSpace = text.lastIndexOf(' ', maxLen);
     if (lastSpace > maxLen * 0.6) return lastSpace + 1;
+
     return maxLen;
   }
 
@@ -581,7 +618,7 @@ export class StreamingMessage {
         const partDisplay = (!isLast || (!this.finalized && !isFinal)) ? part : part;
         const payload = { content: partDisplay, embeds: [], components: [], flags: MessageFlags.SuppressEmbeds };
         if (pi === 0 && this._isPlaceholder && this.currentMessage) {
-          _unregisterPlaceholder(this.currentMessage.id);
+          // _unregisterPlaceholder는 finalize() 완료 시점에만 호출 (orphan cleanup이 버튼 제거할 수 있도록)
           this._isPlaceholder = false;
           await this.currentMessage.edit({ content: partDisplay, embeds: [], components: [], flags: MessageFlags.SuppressEmbeds });
           this.sentLength = part.length;
@@ -606,8 +643,8 @@ export class StreamingMessage {
 
     try {
       // Placeholder → edit in place (delete+resend causes message disappearing flash)
+      // _unregisterPlaceholder는 finalize() 완료 시점에만 호출 (orphan cleanup이 버튼 제거할 수 있도록)
       if (this._isPlaceholder && this.currentMessage) {
-        _unregisterPlaceholder(this.currentMessage.id);
         this._isPlaceholder = false;
         await this.currentMessage.edit({ content: displayContent, embeds: [], components, flags: MessageFlags.SuppressEmbeds });
         this.sentLength = content.length;
@@ -683,7 +720,7 @@ export class StreamingMessage {
     if (this._isPlaceholder && !this.hasRealContent) {
       if (this.currentMessage) {
         _unregisterPlaceholder(this.currentMessage.id);
-        try { await this.currentMessage.delete(); } catch { /* ignore */ }
+        try { await this.currentMessage.delete(); } catch (err) { recordSilentError('streaming.finalize.deletePlaceholder', err); }
       }
       return;
     }
@@ -700,19 +737,36 @@ export class StreamingMessage {
         // 커서 ▌ 잔류 방지: content에서도 커서 제거
         const cleaned = (this.currentMessage.content || '').replace(/ ▌$/, '');
         await this.currentMessage.edit({ content: cleaned, components: [] });
-      } catch { /* ignore */ }
+      } catch (err) { recordSilentError('streaming.finalize.editClean', err); }
     }
     // 안전망: rate limit 등으로 마지막 edit가 실패했을 경우 커서 잔류 방지
-    // _flush()/_sendOrEdit에서 retry 했어도 실패했다면 여기서 한 번 더 시도
+    // _flush()/_sendOrEdit에서 retry 했어도 실패했다면 여기서 여러 번 재시도 (말짤림 방지)
     if (this.currentMessage) {
-      try {
-        const finalContent = (this.currentMessage.content || '').replace(/ ▌$/, '');
-        if ((this.currentMessage.content || '').endsWith(' ▌')) {
-          log('warn', 'finalize: cursor still present after flush — force removing');
-          await new Promise(r => setTimeout(r, 500)); // rate limit 해소 대기
-          await this.currentMessage.edit({ content: finalContent, components: [] });
+      // buffer가 남아 있으면 전체 내용으로 복원, 없으면 Discord 캐시에서 커서만 제거
+      const finalContent = this.buffer.length > 0
+        ? formatForDiscord(this.buffer, { channelId: this.channelId })
+        : (this.currentMessage.content || '').replace(/ ▌$/, '');
+      if ((this.currentMessage.content || '').endsWith(' ▌')) {
+        log('warn', 'finalize: cursor still present after flush — force removing with retry');
+        // Exponential backoff retry: rate limit 심각해도 최종적으로 반영
+        const delays = [500, 1500, 3000];
+        let success = false;
+        for (const delay of delays) {
+          try {
+            await new Promise(r => setTimeout(r, delay));
+            await this.currentMessage.edit({ content: finalContent, components: [] });
+            success = true;
+            break;
+          } catch (err) {
+            recordSilentError('streaming.finalize.cursorRemovalRetry', err);
+          }
         }
-      } catch { /* ignore */ }
+        if (!success) {
+          log('error', 'finalize: all cursor removal retries failed — 응답 말짤림 가능성', {
+            messageId: this.currentMessage.id, contentLen: finalContent.length,
+          });
+        }
+      }
     }
     if (this.currentMessage) {
       _unregisterPlaceholder(this.currentMessage.id);
@@ -906,78 +960,31 @@ export class StreamingMessage {
         }
       }
 
-      // Send TABLE_DATA as high-quality PNG via Chrome singleton + improved CSS
+      // TABLE_DATA → Discord mobile-friendly 텍스트 (Chrome PNG 제거 — 2026-04-15)
+      // Chrome 렌더링 PNG 대신 bullet list 형식으로 전송
       if (tableJson) {
         const { title, columns = [], dataSource = [] } = tableJson;
         if (columns.length > 0 && dataSource.length > 0) {
-          const tableCacheKey = _cacheKey(tableJson);
-          const tableCached = _imageCacheGet(tableCacheKey);
-          if (tableCached) {
-            log('info', 'TABLE_DATA cache hit', { key: tableCacheKey });
-            tableImgBuf = tableCached;
-          } else {
-          let page = null;
           try {
-            const browser = await _getChromeBrowser();
-            page = await browser.newPage();
-            await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 2 });
-
-            const thCells = columns.map((c) =>
-              `<th>${String(c.title ?? c.dataIndex ?? '')}</th>`).join('');
-            const bodyRows = dataSource.map((row) => {
-              const cls = row._highlight ? ' class="highlight"' : '';
-              return `<tr${cls}>${columns.map((c) => `<td>${String(row[c.dataIndex] ?? '')}</td>`).join('')}</tr>`;
-            }).join('');
-
-            const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{
-  background:#313338;
-  font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Segoe UI",sans-serif;
-  padding:20px 22px;display:inline-block;min-width:200px
-}
-h2{
-  color:#fff;font-size:15px;font-weight:700;
-  margin-bottom:14px;padding-bottom:8px;
-  border-bottom:2px solid #5865f2;letter-spacing:.01em
-}
-table{
-  border-collapse:separate;border-spacing:0;
-  font-size:13.5px;color:#dbdee1;
-  border-radius:8px;overflow:hidden;
-  border:1px solid #3b3d43
-}
-th{
-  background:#1e1f22;color:#9b9fa8;
-  padding:10px 18px;text-align:left;
-  font-size:11.5px;font-weight:700;
-  text-transform:uppercase;letter-spacing:.07em;
-  white-space:nowrap;border-bottom:1px solid #3b3d43
-}
-th:not(:last-child){border-right:1px solid #3b3d43}
-td{padding:9px 18px;white-space:nowrap}
-td:not(:last-child){border-right:1px solid #3b3d43}
-tr:not(:last-child) td{border-bottom:1px solid #3b3d43}
-tbody tr:nth-child(even) td{background:#2b2d31}
-tbody tr:nth-child(odd) td{background:#313338}
-tbody tr.highlight td{background:#3c3f6e !important;color:#fff}
-tbody tr.highlight td{border-left:3px solid #5865f2}
-</style></head><body>${title ? `<h2>${title}</h2>` : ''}
-<table><thead><tr>${thCells}</tr></thead><tbody>${bodyRows}</tbody></table>
-</body></html>`;
-
-            await page.setContent(html, { waitUntil: 'networkidle0' });
-            const bodyEl = await page.$('body');
-            const imgBuf = await bodyEl.screenshot({ type: 'png' });
-            _imageCacheSet(tableCacheKey, imgBuf);
-            tableImgBuf = imgBuf;
+            const lines = [];
+            if (title) lines.push(`**${title}**`);
+            // 헤더: 첫 컬럼 외 나머지 컬럼명 표시
+            const restHeaders = columns.slice(1).map(c => c.title ?? c.dataIndex ?? '').join(' · ');
+            if (restHeaders) lines.push(`*${restHeaders}*`);
+            lines.push('─'.repeat(24));
+            for (const row of dataSource) {
+              const firstCol = columns[0];
+              const firstVal = firstCol ? String(row[firstCol.dataIndex] ?? '') : '';
+              const restVals = columns.slice(1).map(c => String(row[c.dataIndex] ?? '')).join(' · ');
+              lines.push(restVals ? `- **${firstVal}** · ${restVals}` : `- ${firstVal}`);
+            }
+            const tableText = lines.join('\n').slice(0, 2000); // Discord 2000자 제한
+            await this.channel.send({ content: tableText });
+            this._markerCardSent = true;
+            log('info', 'TABLE_DATA sent as text', { rows: dataSource.length });
           } catch (tErr) {
-            log('error', 'TABLE_DATA image render failed', { error: tErr.message });
-            _chromeBrowser = null; // 오류 시 싱글톤 리셋 → 다음 요청에서 재시작
-          } finally {
-            if (page) await page.close().catch(() => {});
+            log('error', 'TABLE_DATA text render failed', { error: tErr.message });
           }
-          } // end cache-miss block
         }
       }
 
@@ -1156,6 +1163,9 @@ mermaid.initialize({
    * 버튼은 마지막 청크에만 부착.
    */
   async _wrapInCV2() {
+    // 자동 래핑 비활성화 — Discord 응답 평문 markdown 전환 정책 (2026-04-15)
+    // 명시적 CV2_DATA 마커가 있을 때만 CV2 사용. streaming 레이어 자동 래핑 금지.
+    return;
     if (!this.currentMessage) return;
     const rawContent = (this.currentMessage.content || '').replace(/ ▌$/, '').trim();
     if (!rawContent || rawContent === '\u200b' || rawContent.length < 10) return;
@@ -1163,7 +1173,7 @@ mermaid.initialize({
     // 래핑 스킵 조건 — flash 유발 최소화
     const hasHeadings = /^#{1,4} /m.test(rawContent);
     const isLongContent = rawContent.length >= 500;
-    if (!hasHeadings && !isLongContent) return; // 단문 + 구조 없음 → 텍스트 유지
+    if (!hasHeadings || !isLongContent) return; // 500자 미만 OR ## 제목 없음 → 텍스트 유지
 
     // 마커 카드가 이미 있고 남은 텍스트가 짧으면 → 래핑 스킵 (마커 카드가 메인)
     if (this._markerCardSent && rawContent.length < 300) return;

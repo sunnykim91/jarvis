@@ -4,11 +4,15 @@ set -euo pipefail
 # route-result.sh - Route results to Discord, ntfy, file, or alert
 # Usage: route-result.sh <mode> <task-id> <message>
 
-BOT_HOME="${BOT_HOME:-${HOME}/.jarvis}"
+BOT_HOME="${BOT_HOME:-${HOME}/jarvis/runtime}"
 CONFIG="${BOT_HOME}/config/monitoring.json"
 
 # --- Config check ---
 [[ -f "$CONFIG" ]] || { echo "ERROR: $CONFIG not found" >&2; exit 1; }
+
+# --- Shared libraries ---
+source "${BOT_HOME}/lib/ntfy-notify.sh"
+source "${BOT_HOME}/lib/discord-notify-bash.sh"
 
 # --- Arguments ---
 MODE="${1:?Usage: route-result.sh <discord|ntfy|alert|file|all> TASK_ID MESSAGE [CHANNEL]}"
@@ -19,8 +23,10 @@ CHANNEL="${4:-}"  # optional: channel name from tasks.json discordChannel field
 # --- Marker extraction (before clean_message) ---
 # CHART_DATA:<json>  → QuickChart 이미지 embed
 # EMBED_DATA:<json>  → Discord rich embed (color card)
+# CV2_DATA:<json>    → Discord Components V2 container card
 CHART_JSON=""
 EMBED_JSON=""
+CV2_JSON=""
 if printf '%s' "$MESSAGE" | grep -q '^CHART_DATA:'; then
     CHART_JSON=$(printf '%s' "$MESSAGE" | grep '^CHART_DATA:' | head -1 | sed 's/^CHART_DATA://')
     MESSAGE=$(printf '%s' "$MESSAGE" | grep -v '^CHART_DATA:' || true)
@@ -28,6 +34,10 @@ fi
 if printf '%s' "$MESSAGE" | grep -q '^EMBED_DATA:'; then
     EMBED_JSON=$(printf '%s' "$MESSAGE" | grep '^EMBED_DATA:' | head -1 | sed 's/^EMBED_DATA://')
     MESSAGE=$(printf '%s' "$MESSAGE" | grep -v '^EMBED_DATA:' || true)
+fi
+if printf '%s' "$MESSAGE" | grep -q 'CV2_DATA:'; then
+    CV2_JSON=$(printf '%s' "$MESSAGE" | grep 'CV2_DATA:' | head -1 | sed 's/.*CV2_DATA://')
+    MESSAGE=$(printf '%s' "$MESSAGE" | grep -v 'CV2_DATA:' || true)
 fi
 
 # --- Message quality filter (central pre-send hook) ---
@@ -84,13 +94,43 @@ send_embed() {
     local webhook_url
     webhook_url=$(get_webhook_url)
     local payload
-    payload=$(jq -n --argjson embed "$embed_json" '{"embeds":[$embed]}')
+    payload=$(jq -n --argjson embed "$embed_json" '{"embeds":[$embed], "allowed_mentions": {"parse": []}}')
     local http_code
     http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$webhook_url" \
         -H "Content-Type: application/json" \
         -d "$payload") || true
     if [[ "$http_code" != "200" && "$http_code" != "204" ]]; then
         echo "WARN: embed webhook returned HTTP $http_code" >&2
+    fi
+}
+
+# --- CV2 sender (Discord Components V2 container card) ---
+send_cv2() {
+    local cv2_json="$1"
+    local webhook_url
+    webhook_url=$(get_webhook_url)
+
+    local payload
+    payload=$(node -e "
+const cv2 = JSON.parse(process.argv[1]);
+const { color = 5763719, blocks = [] } = cv2;
+const comps = blocks.map(b => ({
+  type: 10,
+  content: (b && typeof b === 'object' && b.content) ? b.content : String(b)
+})).filter(b => b.content && b.content.trim());
+if (!comps.length) process.exit(0);
+const container = { type: 17, accent_color: color, components: comps };
+console.log(JSON.stringify({ flags: 32768, components: [container], allowed_mentions: { parse: [] } }));
+" "$cv2_json" 2>/dev/null) || return 0
+
+    if [[ -z "$payload" ]]; then return 0; fi
+
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$webhook_url" \
+        -H "Content-Type: application/json" \
+        -d "$payload") || true
+    if [[ "$http_code" != "200" && "$http_code" != "204" ]]; then
+        echo "WARN: cv2 webhook returned HTTP $http_code" >&2
     fi
 }
 
@@ -106,7 +146,7 @@ send_chart_embed() {
     if [[ -z "$chart_url" ]]; then return 0; fi
 
     local payload
-    payload=$(jq -n --arg url "$chart_url" '{"embeds":[{"image":{"url":$url},"color":3447003}]}')
+    payload=$(jq -n --arg url "$chart_url" '{"embeds":[{"image":{"url":$url},"color":3447003}], "allowed_mentions": {"parse": []}}')
     local http_code
     http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$webhook_url" \
         -H "Content-Type: application/json" \
@@ -116,8 +156,62 @@ send_chart_embed() {
     fi
 }
 
-# --- Discord: 2000-char chunking ---
-send_discord() {
+# --- Noise gate: 순수 성공/무변경 메시지 → 전송 안 함 (로그만) ---
+_is_noise() {
+    local msg="$1"
+    local trimmed
+    trimmed=$(echo "$msg" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr -d '\n')
+    # 20자 미만 단순 완료
+    if [[ ${#trimmed} -lt 20 ]]; then
+        case "$trimmed" in
+            *정상*|*완료*|*성공*|*ok*|*OK*|*변경*없*|*no*change*|*No*output*) return 0 ;;
+        esac
+    fi
+    # 순수 성공 패턴 (전체가 이 패턴이면 노이즈)
+    local cleaned
+    cleaned=$(echo "$msg" | grep -viE '^[[:space:]]*$|^정상|^변경.*없|^no (changes|output|new)|^완료|^성공|^ok$|^all (good|clear|pass)' || true)
+    if [[ -z "$cleaned" ]]; then return 0; fi
+    return 1
+}
+
+# --- Severity detection: 메시지 내용으로 심각도 판별 ---
+_detect_severity() {
+    local msg="$1"
+    if echo "$msg" | grep -qiE '실패|FAIL|error|critical|장애|급락|OOM|exit [1-9]|ABORTED|crash'; then
+        echo "error"
+    elif echo "$msg" | grep -qiE '경고|WARN|주의|임계|timeout|stale|degraded|CB.*임박'; then
+        echo "warning"
+    else
+        echo "info"
+    fi
+}
+
+# --- Standard header: 태스크명 + 시각 + 상태 이모지 자동 삽입 ---
+_build_header() {
+    local task_id="$1"
+    local severity="$2"
+    local emoji
+    case "$severity" in
+        error)   emoji="🔴" ;;
+        warning) emoji="🟡" ;;
+        *)       emoji="🟢" ;;
+    esac
+    local kst_time
+    kst_time=$(TZ=Asia/Seoul date '+%H:%M' 2>/dev/null || date '+%H:%M')
+    echo "> ${emoji} **${task_id}** · ${kst_time} KST"
+}
+
+# --- Embed color by severity (Uptime Kuma 패턴) ---
+_severity_embed_color() {
+    case "$1" in
+        error)   echo "15548997" ;;  # red
+        warning) echo "16705372" ;;  # yellow
+        *)       echo "5763719"  ;;  # green
+    esac
+}
+
+# --- Discord: 2000-char chunking (task-specific; simple sends use lib/discord-notify-bash.sh) ---
+route_to_discord() {
     local message="$1"
     local webhook_url
     webhook_url=$(get_webhook_url)
@@ -127,7 +221,7 @@ send_discord() {
     while [[ $offset -lt $total ]]; do
         local chunk="${message:$offset:1990}"
         local payload
-        payload=$(jq -n --arg content "$chunk" '{"content": $content, "flags": 4}')
+        payload=$(jq -n --arg content "$chunk" '{"content": $content, "flags": 4, "allowed_mentions": {"parse": []}}')
         local http_code
         http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$webhook_url" \
             -H "Content-Type: application/json" \
@@ -146,6 +240,12 @@ send_discord() {
         send_embed "$EMBED_JSON"
     fi
 
+    # --- CV2 card (if CV2_DATA present, send as Components V2 container) ---
+    if [[ -n "$CV2_JSON" ]]; then
+        sleep 0.3
+        send_cv2 "$CV2_JSON"
+    fi
+
     # --- Chart embed (append after text/embed if CHART_JSON present) ---
     if [[ -n "$CHART_JSON" ]]; then
         sleep 0.5
@@ -153,25 +253,33 @@ send_discord() {
     fi
 }
 
-# --- ntfy push ---
-send_ntfy() {
-    local title="$1"
-    local message="$2"
-    local server
-    local topic
-    server=$(jq -r '.ntfy.server' "$CONFIG")
-    topic=$(jq -r '.ntfy.topic' "$CONFIG")
-    curl -s -m 5 \
-        -H "Title: $title" \
-        -H "Priority: default" \
-        -d "$message" \
-        "${server}/${topic}" > /dev/null 2>&1
-}
 
 # --- Route by mode ---
 case "$MODE" in
     discord)
-        send_discord "$MESSAGE"
+        # Noise gate: 순수 성공 메시지는 Discord 전송 생략
+        if [[ -z "$EMBED_JSON" && -z "$CV2_JSON" && -z "$CHART_JSON" ]] && _is_noise "$MESSAGE"; then
+            echo "NOISE_GATE: $TASK_ID — 순수 성공, Discord 전송 생략" >&2
+        else
+            # Severity 판별 + 표준 헤더 삽입
+            _SEVERITY=$(_detect_severity "$MESSAGE")
+            _HEADER=$(_build_header "$TASK_ID" "$_SEVERITY")
+            MESSAGE="${_HEADER}
+${MESSAGE}"
+            # error/warning → 자동 embed 래핑 (EMBED_DATA가 없는 경우만)
+            if [[ -z "$EMBED_JSON" && "$_SEVERITY" != "info" ]]; then
+                _COLOR=$(_severity_embed_color "$_SEVERITY")
+                # 메시지 길이가 4096(embed description 한도) 이내면 embed로
+                if [[ ${#MESSAGE} -le 4000 ]]; then
+                    EMBED_JSON="{\"description\":$(printf '%s' "$MESSAGE" | jq -Rs .),\"color\":${_COLOR}}"
+                    route_to_discord ""  # 빈 텍스트 + embed
+                else
+                    route_to_discord "$MESSAGE"
+                fi
+            else
+                route_to_discord "$MESSAGE"
+            fi
+        fi
         ;;
     ntfy)
         send_ntfy "${BOT_NAME:-Bot}: $TASK_ID" "$MESSAGE"
@@ -184,7 +292,7 @@ case "$MODE" in
         echo "Result for $TASK_ID saved to results directory."
         ;;
     all)
-        send_discord "$MESSAGE"
+        route_to_discord "$MESSAGE"
         send_ntfy "${BOT_NAME:-Bot}: $TASK_ID" "$MESSAGE"
         echo "Result for $TASK_ID saved to results directory."
         ;;

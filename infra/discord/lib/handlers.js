@@ -11,7 +11,8 @@
  *   ./queue-processor.js — pending message queue
  */
 
-import { writeFileSync, rmSync, readFileSync, existsSync, renameSync } from 'node:fs';
+import { BoundedMap } from './bounded-map.js';
+import { writeFileSync, rmSync, readFileSync, existsSync, renameSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -57,8 +58,9 @@ import {
   reloadUserProfiles,
   getUserProfile,
 } from './claude-runner.js';
+import { appendFeed } from './channel-feed.js';
 import { generateCode, verifyCode } from './pairing.js';
-import { userMemory } from './user-memory.js';
+import { userMemory } from '../../lib/user-memory.mjs';
 import { t } from './i18n.js';
 import { recordError } from './error-tracker.js';
 
@@ -70,7 +72,10 @@ import { pendingQueue, enqueue, processQueue } from './queue-processor.js';
 import { MessageDebouncer } from './message-debouncer.js';
 import { ProcessorContext, createPreProcessorRegistry } from './pre-processor.js';
 import { isTutoringQuery } from './prompt-sections.js';
-import { langfuse } from './langfuse-client.mjs';
+// langfuse 제거 (2026-04-17): Mac Mini 리소스 제약으로 로컬 JSONL 원장으로 교체.
+// 측정 파일: response-ledger.jsonl / feedback-score.jsonl / reask-tracker.jsonl
+//          / permission-denied.jsonl
+// (tool-guard-trips.jsonl은 2026-04-17 가드 제거 후 더 이상 append 안 됨)
 import { detectAndRecord as _trackCommitment } from './commitment-tracker.js';
 import { detectStatType, sendStatVisual } from './stat-visual.js';
 import { detectAnalyticalType, generateAndSendVisual } from './visual-gen.js';
@@ -81,7 +86,14 @@ import { detectAnalyticalType, generateAndSendVisual } from './visual-gen.js';
 // ---------------------------------------------------------------------------
 const _msgDebouncer = new MessageDebouncer();
 /** cancel token restart 시 restartPrompt를 debounce 경유 후에도 보존 (messageId → prompt) */
-const _promptOverrides = new Map();
+const _promptOverrides = new BoundedMap(500, 10 * 60_000); // 500 items, 10min TTL
+
+// Phase 0 Sensor: 유저별 직전 trace/prompt 캐시 — 피드백 도착 시 해당 trace에 score 부여
+const _lastTraceByUser = new BoundedMap(1000, 24 * 60 * 60_000); // 1000 items, 24h TTL
+const _lastPromptByUser = new BoundedMap(1000, 24 * 60 * 60_000);
+
+// (2026-04-17 제거) MAX_TOOL_CALLS_PER_TURN 강제 가드 삭제 — SDK maxTurns + 타임아웃 + maxBudget으로 충분.
+// toolCount 관측은 response-ledger.jsonl에 그대로 저장.
 
 // Pre-processor registry (RAG context enrichment)
 const _preProcessorRegistry = createPreProcessorRegistry(searchRagForContext);
@@ -98,7 +110,7 @@ function _buildBatchContent(messages) {
 // Pending task state — timeout 발생 시 저장, "계속" 입력 시 재주입
 // ---------------------------------------------------------------------------
 
-const _BOT_HOME = process.env.BOT_HOME || join(homedir(), '.jarvis');
+const _BOT_HOME = process.env.BOT_HOME || join(homedir(), 'jarvis/runtime');
 const PENDING_TASKS_PATH = join(_BOT_HOME, 'state', 'pending-tasks.json');
 const PENDING_TASK_TTL_MS = 30 * 60 * 1000; // 30분
 
@@ -178,10 +190,36 @@ function _isSessionIdle(sessions, sessionKey) {
  * 명시적 종료 신호 또는 비활동 타임아웃 감지 시 백그라운드 요약 트리거.
  * 메인 흐름을 차단하지 않음 (fire-and-forget).
  */
+import { saveHandoff } from './session-handoff.js';
+import { recordSilentError } from './error-ledger.js';
+
 function _triggerSessionEndSummary(sessionKey, reason) {
   compactSessionWithAI(sessionKey).catch((e) =>
     log('debug', `_triggerSessionEndSummary: compaction failed (${reason})`, { sessionKey, error: e?.message }),
   );
+  // Handoff 저장: 다음 세션이 구조화된 상태를 받을 수 있도록
+  try {
+    const summaryPath = join(_BOT_HOME, 'state', 'session-summaries', `${sessionKey}.md`);
+    if (existsSync(summaryPath)) {
+      const raw = readFileSync(summaryPath, 'utf-8');
+      let lastTopic = '';
+      // 1차: 원본 형식 "[YYYY-MM-DD HH:MM] User: 텍스트"
+      const userTurns = raw.match(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\]\s+User:\s*(.+)/g) || [];
+      if (userTurns.length) {
+        lastTopic = userTurns[userTurns.length - 1].replace(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\]\s+User:\s*/, '').slice(0, 100);
+      } else {
+        // 2차: compaction 형식 — "### 마지막 진행 주제" 또는 "### 사용자 의도" 섹션
+        const topicMatch = raw.match(/###\s*(?:마지막 진행 주제|사용자 의도)\s*\n([\s\S]*?)(?=\n###|\n---|\Z)/);
+        if (topicMatch) lastTopic = topicMatch[1].trim().split('\n')[0].slice(0, 100);
+      }
+      // 3차: compaction에서 "### 미완 작업" 추출
+      const pendingMatch = raw.match(/###\s*미완\s*작업\s*\n([\s\S]*?)(?=\n###|\n---|\Z)/);
+      const pendingTasks = pendingMatch
+        ? pendingMatch[1].trim().split('\n').filter(l => l.startsWith('-')).map(l => l.replace(/^-\s*/, '').slice(0, 80)).slice(0, 5)
+        : [];
+      saveHandoff(sessionKey, { lastTopic, keyDecisions: [], pendingTasks });
+    }
+  } catch (err) { recordSilentError('handlers.saveHandoff', err); }
   log('info', `Session end summary triggered (${reason})`, { sessionKey });
 }
 
@@ -199,10 +237,15 @@ const TEXT_DOC_EXTS = /\.(txt|md|html|htm|css|js|mjs|ts|java|py|json|xml|csv|yam
 // Dedup: prevent same message from being processed twice (shard resume / race condition)
 const processingMsgIds = new Set();
 
-// Session compaction: 토큰 기반 컨텍스트 관리
-// Sonnet 200k 컨텍스트의 ~40% 지점에서 선제적 compaction
-const COMPACT_THRESHOLD_TOKENS = 80_000;
-const sessionTokenCounts = new Map(); // sessionKey → 누적 input_tokens (인메모리)
+// Session compaction: Progressive Compaction (업계 권고 — Anthropic, OpenAI)
+// 단일 80K 한방 대신 3단계: 40K(Tier 1 제거) → 60K(요약 축소) → 80K(전면 리셋)
+const COMPACT_LEVELS = [
+  { threshold: 40_000, action: 'lean' },           // Tier 1 섹션 미로드 (format-detail 등)
+  { threshold: 60_000, action: 'compress_history' }, // 대화 요약 축소
+  { threshold: 80_000, action: 'full_compact' },     // 전면 compaction + 세션 리셋
+];
+const COMPACT_THRESHOLD_TOKENS = 80_000; // 하위 호환
+const sessionTokenCounts = new BoundedMap(1000, 60 * 60_000); // 1000 items, 60min TTL
 // 재시작 시 in-memory 카운트는 sessions.getTokenCount()으로 복구
 
 
@@ -499,7 +542,7 @@ export async function handleMessage(message, state) {
   if (rememberMatch) {
     const fact = rememberMatch[1].trim();
     if (fact) {
-      userMemory.addFact(message.author.id, fact);
+      userMemory.addFact(message.author.id, fact, 'discord-remember-cmd');
       await message.reply(t('msg.remembered'));
       log('info', 'User memory saved via text command', { userId: message.author.id, fact: fact.slice(0, 100) });
     }
@@ -652,6 +695,55 @@ async function _processBatch(messages, { sessions, rateTracker, semaphore, activ
   const feedback = processFeedback(message.author.id, userPrompt);
   if (feedback) {
     log('info', 'Feedback detected', { userId: message.author.id, type: feedback.type });
+
+    // Phase 0 Sensor: positive/negative/correction → feedback-score.jsonl 로컬 원장
+    // (Langfuse 의존 제거 — Mac Mini 리소스 절약, JSONL로 1주 집계 충분)
+    const prevTraceId = _lastTraceByUser.get(message.author.id);
+    const scoreMap = { positive: 1.0, negative: 0.0, correction: 0.3 };
+    if (prevTraceId && scoreMap[feedback.type] !== undefined) {
+      try {
+        const ledgerDir = join(_BOT_HOME, 'state');
+        mkdirSync(ledgerDir, { recursive: true });
+        appendFileSync(
+          join(ledgerDir, 'feedback-score.jsonl'),
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            source: 'discord-bot',
+            traceId: prevTraceId,
+            userId: message.author.id,
+            channelId: message.channel?.id ?? null,
+            feedbackType: feedback.type,
+            score: scoreMap[feedback.type],
+            comment: String(userPrompt).slice(0, 200),
+          }) + '\n'
+        );
+      } catch (e) {
+        log('debug', 'feedback-score append failed (non-blocking)', { error: e?.message });
+      }
+    }
+
+    // Phase 0 Sensor: negative/correction → reask-tracker.jsonl 적재
+    if (feedback.type === 'negative' || feedback.type === 'correction') {
+      try {
+        const ledgerDir = join(_BOT_HOME, 'state');
+        mkdirSync(ledgerDir, { recursive: true });
+        appendFileSync(
+          join(ledgerDir, 'reask-tracker.jsonl'),
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            source: 'discord-bot',
+            userId: message.author.id,
+            channelId: message.channel?.id ?? null,
+            feedbackType: feedback.type,
+            feedbackText: String(userPrompt).slice(0, 240),
+            prevPrompt: String(_lastPromptByUser.get(message.author.id) ?? '').slice(0, 240),
+            lastTraceId: prevTraceId ?? null,
+          }) + '\n'
+        );
+      } catch (e) {
+        log('debug', 'reask-tracker append failed (non-blocking)', { error: e?.message });
+      }
+    }
   }
 
   const reactions = new Set();
@@ -714,21 +806,37 @@ async function _processBatch(messages, { sessions, rateTracker, semaphore, activ
       return;
     }
 
-    // Auto-compact: 토큰 임계치 초과 시 자동 세션 리셋 + haiku 요약
+    // Progressive Compaction: 3단계 (업계 권고 — Anthropic, OpenAI, LangChain)
+    // 40K: Tier 1 섹션 미로드 (budgetMode=lean)
+    // 60K: 대화 요약 축소 (compaction + 계속 유지)
+    // 80K: 전면 세션 리셋
+    let _budgetMode = 'normal';
     if (sessionId) {
       const tokens = sessionTokenCounts.get(sessionKey) ?? sessions.getTokenCount(sessionKey);
-      if (tokens >= COMPACT_THRESHOLD_TOKENS) {
-        const reason = `토큰 임계치 초과 (${tokens.toLocaleString()} >= ${COMPACT_THRESHOLD_TOKENS.toLocaleString()})`;
-        log('info', 'Auto-compact triggered', { reason, sessionKey, tokens });
-        // 1. JSONL 삭제 — resume 시 메모리 재폭증 차단
-        _deleteSessionJsonl(sessionId, thread.id);
-        // 2. AI 시맨틱 요약 백그라운드 실행 (agent SDK 사용, @anthropic-ai/sdk 불필요)
-        compactSessionWithAI(sessionKey).catch(
-          (e) => log('warn', 'Auto-compact AI summary failed', { error: e.message }),
-        );
-        sessions.delete(sessionKey);
-        sessionId = null;
-        sessionTokenCounts.delete(sessionKey);
+      if (Number.isFinite(tokens)) {
+        if (tokens >= COMPACT_LEVELS[2].threshold) {
+          // 80K: 전면 compaction + 세션 리셋
+          const reason = `토큰 ${tokens.toLocaleString()} >= ${COMPACT_LEVELS[2].threshold.toLocaleString()} (full compact)`;
+          log('info', 'Progressive compact L3: full reset', { reason, sessionKey, tokens });
+          _deleteSessionJsonl(sessionId, thread.id);
+          compactSessionWithAI(sessionKey).catch(
+            (e) => log('warn', 'Auto-compact AI summary failed', { error: e.message }),
+          );
+          sessions.delete(sessionKey);
+          sessionId = null;
+          sessionTokenCounts.delete(sessionKey);
+        } else if (tokens >= COMPACT_LEVELS[1].threshold) {
+          // 60K: 축소 요약 + 세션 유지
+          log('info', 'Progressive compact L2: compress history', { sessionKey, tokens });
+          compactSessionWithAI(sessionKey).catch(
+            (e) => log('warn', 'L2 compact failed', { error: e.message }),
+          );
+          _budgetMode = 'lean';
+        } else if (tokens >= COMPACT_LEVELS[0].threshold) {
+          // 40K: Tier 1 미로드만
+          log('info', 'Progressive compact L1: lean mode', { sessionKey, tokens });
+          _budgetMode = 'lean';
+        }
       }
     }
 
@@ -956,6 +1064,7 @@ ${extracted}
     }
 
     const effectiveChannelId = isThread ? message.channel.parentId : message.channel.id;
+    const chName = isThread ? (message.channel.parent?.name ?? 'thread') : (message.channel.name ?? 'dm');
     // 재생성 버튼 대비: sessionKey별 마지막 원본 쿼리 저장
     lastQueryStore.set(sessionKey, originalPrompt);
     streamer = new StreamingMessage(thread, message, sessionKey, effectiveChannelId);
@@ -1085,11 +1194,13 @@ ${extracted}
         sessionId: sid,
         threadId: thread.id,
         channelId: effectiveChannelId,
+        channelName: chName,
         attachments: imageAttachments,
         userId: message.author.id,
         contextBudget,
         signal: abortController.signal,
         injectedSummary: _injectedSummary,
+        _budgetMode,
       })) {
         if (event.type === 'system') {
           if (event.session_reset) {
@@ -1128,6 +1239,10 @@ ${extracted}
             hasStreamEvents = true;
             lastStreamBlockWasTool = true;
             toolCount++;
+            // toolCount 관측만 — 강제 중단 가드는 제거(2026-04-17).
+            // 이유: SDK maxTurns + 10분 timeout + maxBudget이 이미 폭주를 차단함.
+            //      8회 제한은 정상 세션 잘라먹는 premature safeguard로 판명(2건 실제 trip).
+            //      response-ledger.jsonl에 toolCount 계속 기록되어 사후 패턴 분석 가능.
             const display = getToolDisplay(se.content_block.name || '');
             streamer.updateStatus(display.desc);
             // ② 세션 연속성: 툴 호출 이름 기록 (최대 20개, 민감 툴 제외)
@@ -1135,6 +1250,14 @@ ${extracted}
             if (toolName && !toolName.includes('secret') && completedTools.length < 20) {
               completedTools.push(toolName);
             }
+            // Tool Call Audit: 도구 호출 ledger에 기록 (Anthropic Verification 패턴)
+            try {
+              const safeTool = (toolName || '').replace(/[\n\r]/g, '_').slice(0, 100);
+              const ledgerDir = join(_BOT_HOME, 'state');
+              mkdirSync(ledgerDir, { recursive: true });
+              const toolEntry = JSON.stringify({ ts: new Date().toISOString(), session: sessionKey, tool: safeTool }) + '\n';
+              appendFileSync(join(ledgerDir, 'tool-call-ledger.jsonl'), toolEntry);
+            } catch { /* ledger 기록 실패는 비차단 */ }
             log('info', `Tool: ${se.content_block.name}`, { threadId: thread.id });
           }
         } else if (event.type === 'assistant') {
@@ -1200,25 +1323,39 @@ ${extracted}
           const cost = event.cost_usd ?? null;
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
-          // Langfuse: trace this generation (fire-and-forget)
+          // Phase 0 Sensor: 로컬 response-ledger (Langfuse 의존 제거)
+          // feedback-score.jsonl과 traceId로 join 가능
           if (!event.is_error) {
-            const lfTraceId = langfuse.createTrace({
-              name: 'discord-response',
-              userId: message.author?.id,
-              sessionId: thread.id,
-              metadata: { channelId: effectiveChannelId, elapsed_s: parseFloat(elapsed) },
-              tags: ['discord'],
-            });
-            const gen = langfuse.startGeneration({
-              traceId: lfTraceId,
-              name: 'discord-response',
-              model: 'claude-sdk',
-              metadata: { cost_usd: cost, tool_count: toolCount },
-            });
-            gen.end({
-              output: lastAssistantText.slice(0, 500),
-              usage: event.usage ? { input: event.usage.input_tokens ?? 0, output: event.usage.output_tokens ?? 0 } : undefined,
-            });
+            const localTraceId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            try {
+              const ledgerDir = join(_BOT_HOME, 'state');
+              mkdirSync(ledgerDir, { recursive: true });
+              appendFileSync(
+                join(ledgerDir, 'response-ledger.jsonl'),
+                JSON.stringify({
+                  ts: new Date().toISOString(),
+                  source: 'discord-bot',
+                  traceId: localTraceId,
+                  userId: message.author?.id ?? null,
+                  channelId: effectiveChannelId,
+                  sessionId: thread.id,
+                  toolCount,
+                  cost_usd: cost,
+                  elapsed_s: parseFloat(elapsed),
+                  input_tokens: event.usage?.input_tokens ?? 0,
+                  output_tokens: event.usage?.output_tokens ?? 0,
+                  stop_reason: event.stop_reason ?? null,
+                  output_snippet: lastAssistantText.slice(0, 300),
+                }) + '\n'
+              );
+            } catch (e) {
+              log('debug', 'response-ledger append failed (non-blocking)', { error: e?.message });
+            }
+            // 유저별 직전 trace/prompt 캐시 — 다음 턴 피드백 도착 시 scoring 대상
+            if (message.author?.id) {
+              _lastTraceByUser.set(message.author.id, localTraceId);
+              _lastPromptByUser.set(message.author.id, String(originalPrompt).slice(0, 240));
+            }
           }
           const rateStatus = rateTracker.check();
 
@@ -1253,7 +1390,6 @@ ${extracted}
           });
 
           if (lastAssistantText.length > 20) {
-            const chName = isThread ? (message.channel.parent?.name ?? 'thread') : (message.channel.name ?? 'dm');
             saveConversationTurn(originalPrompt, lastAssistantText, chName, message.author.id);
             saveSessionSummary(sessionKey, originalPrompt, lastAssistantText);
             // 토큰 누적: result 이벤트의 usage.input_tokens (claude-runner.js에서 포워딩)
@@ -1302,7 +1438,10 @@ ${extracted}
 
       // Loop ended without result event
       if (!streamer.finalized && !retryNeeded && !needsContinuation) {
-        if (aborted && killReason !== 'restart') {
+        if (aborted && killReason === 'manual') {
+          // 사용자 수동 중단 — auto-resume 없이 즉시 finalize
+          await streamer.finalize();
+        } else if (aborted && killReason !== 'restart') {
           // 타임아웃: 2회까지 자동 재개, 이후에만 사용자에게 알림
           _savePendingTask(sessionKey, originalPrompt, completedTools);
           if (_autoResumeAttempts < 2) {
@@ -1337,7 +1476,7 @@ ${extracted}
       originalPrompt,
       channelId: effectiveChannelId,
       threadId: thread.id,
-      botHome: process.env.BOT_HOME || `${homedir()}/.jarvis`,
+      botHome: process.env.BOT_HOME || `${homedir()}/jarvis/runtime`,
       client,
     });
     await streamer.updatePhase('🔍 컨텍스트 검색 중...');
@@ -1626,7 +1765,7 @@ export async function rerunQuery(channel, query, sessionKey, state, opts = {}) {
         originalPrompt: query,   // use original (un-summarized) query for pattern matching
         channelId: channel.id,
         threadId: channel.id,
-        botHome: process.env.BOT_HOME || `${homedir()}/.jarvis`,
+        botHome: process.env.BOT_HOME || `${homedir()}/jarvis/runtime`,
         client: channel.client ?? null,
       });
       fullQuery = await _preProcessorRegistry.run(fullQuery, preCtx);

@@ -6,7 +6,7 @@ set -euo pipefail
 # result-check: 최근 크론 실행 결과의 키워드/패턴/길이 검증 (비용 $0)
 # validate: 스킬 파일 구조 + 필수 섹션 검증 (비용 $0)
 
-BOT_HOME="${BOT_HOME:-$HOME/.jarvis}"
+BOT_HOME="${BOT_HOME:-$HOME/jarvis/runtime}"
 EVAL_CONFIG="$BOT_HOME/config/skill-evals/functional.json"
 COMMANDS_DIR="$HOME/.claude/commands"
 RESULT_DIR="$BOT_HOME/state/skill-eval-results"
@@ -73,7 +73,7 @@ for i in $(seq 0 $((SKILL_COUNT - 1))); do
         fi
 
         # 파일 나이 확인
-        file_age_sec=$(( $(date +%s) - $(stat -c '%Y' "$result_file" 2>/dev/null || stat -f %m "$result_file" 2>/dev/null || echo 0) ))
+        file_age_sec=$(( $(date +%s) - $(stat -f %m "$result_file" 2>/dev/null || stat -c '%Y' "$result_file" 2>/dev/null || echo 0) ))
         file_age_hours=$((file_age_sec / 3600))
         if [[ "$file_age_hours" -gt "$max_age_hours" ]]; then
             REPORT="${REPORT}- ⚠️ **${SKILL_NAME}** · 결과 오래됨 (${file_age_hours}h > ${max_age_hours}h)\n"
@@ -188,7 +188,7 @@ $(echo -e "$REPORT")
 
 # Discord 전송
 if [[ -x "$ROUTE_RESULT" ]]; then
-    "$ROUTE_RESULT" "discord" "skill-eval" "$SUMMARY" "jarvis-ceo" 2>>"$LOG_FILE" || true
+    "$ROUTE_RESULT" "discord" "skill-eval" "$SUMMARY" 2>>"$LOG_FILE" || true
 fi
 
 echo "$SUMMARY"

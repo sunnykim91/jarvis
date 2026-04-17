@@ -1,17 +1,19 @@
-import discordPkg from 'discord.js';
-const { EmbedBuilder } = discordPkg;
 import { t } from './i18n.js';
+import { appendFeed } from './channel-feed.js';
+import { reportFormat, kstFooter } from './formatters.js';
 
 class AlertBatcher {
   constructor({ windowMs = 30_000 } = {}) {
     this.windowMs = windowMs;
     this.channel = null;
+    this.channelName = null;
     this.queue = [];
     this.timer = null;
   }
 
   init(channel) {
     this.channel = channel;
+    this.channelName = channel?.name ?? null;
   }
 
   push({ title, message, level = 'default' }) {
@@ -34,21 +36,27 @@ class AlertBatcher {
 
     const alerts = this.queue.splice(0);
 
-    const hasHighLevel = alerts.some(a => a.level === 'high' || a.level === 'urgent');
-    const color = hasHighLevel ? 0xe74c3c : 0xf39c12; // red : yellow
+    const items = alerts.map(a => ({
+      state: a.level === 'high' || a.level === 'urgent' ? 'error' : 'warn',
+      label: a.title,
+      value: a.message,
+    }));
+
+    const text = reportFormat({
+      title: t('alert.batch.title', { count: alerts.length }),
+      items,
+      footer: kstFooter(),
+    });
 
     const description = alerts
       .map(a => `• **${a.title}**: ${a.message}`)
       .join('\n');
 
-    const embed = new EmbedBuilder()
-      .setColor(color)
-      .setTitle(t('alert.batch.title', { count: alerts.length }))
-      .setDescription(description)
-      .setTimestamp();
-
     if (this.channel) {
-      await this.channel.send({ embeds: [embed] });
+      await this.channel.send(text);
+      if (this.channelName) {
+        appendFeed(this.channelName, 'alert', description);
+      }
     }
   }
 

@@ -16,9 +16,15 @@ unset ANTHROPIC_API_KEY 2>/dev/null || true
 # Prevent nested claude detection
 unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 
-BOT_HOME="${BOT_HOME:-${HOME}/.jarvis}"
+BOT_HOME="${BOT_HOME:-${HOME}/jarvis/runtime}"
 NODE_SQLITE="node --experimental-sqlite --no-warnings"
 FSM_STORE="${BOT_HOME}/lib/task-store.mjs"
+
+# --- Trajectory logger: 크론 실행 궤적 수집 ---
+_TRAJECTORY_LIB="$(cd "$(dirname "$0")/../lib" && pwd)/trajectory-logger.sh"
+if [[ -f "$_TRAJECTORY_LIB" ]]; then
+    source "$_TRAJECTORY_LIB"
+fi
 
 # --- FSM 헬퍼 ---
 _fsm_ensure() {
@@ -29,18 +35,12 @@ _fsm_transition() {
     local task_id="$1" to_status="$2" extra="${3:-{}}"
     ${NODE_SQLITE} "${FSM_STORE}" transition "$task_id" "$to_status" "bot-cron" "$extra" 2>/dev/null || true
 }
-_fsm_discord_alert() {
-    # 태스크 실패 시 Discord jarvis-system 채널에 직접 알림 (webhook)
-    local msg="$1"
-    local webhook_url
-    webhook_url=$(jq -r '.webhooks["jarvis-system"] // .webhooks["jarvis"] // empty' "${BOT_HOME}/config/monitoring.json" 2>/dev/null || true)
-    if [[ -n "${webhook_url:-}" ]]; then
-        local payload; payload=$(jq -n --arg m "$msg" '{content: $m}')
-        curl -sS -X POST "$webhook_url" \
-            -H "Content-Type: application/json" \
-            -d "$payload" > /dev/null 2>&1 || true
-    fi
-}
+# 공용 헬퍼 로드 — DRY (_fsm_discord_alert, _permanent_disable_task, _ledger_append).
+# SSoT: infra/lib/cron-helpers.sh. 새 크론 wrapper 추가 시에도 이 source 한 줄만 필요.
+if [[ -f "${BOT_HOME}/lib/cron-helpers.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${BOT_HOME}/lib/cron-helpers.sh"
+fi
 # ADR-007: Plugin system — regenerate effective-tasks.json, then use it
 if [[ -x "${BOT_HOME}/bin/plugin-loader.sh" ]]; then
     "${BOT_HOME}/bin/plugin-loader.sh" 2>/dev/null || true
@@ -59,6 +59,11 @@ mkdir -p "$(dirname "$CRON_LOG")"
 log() {
     echo "[$(date '+%F %T')] [${TASK_ID}] $1" >> "$CRON_LOG"
 }
+
+# --- Continue Sites: 다단계 에러 복구 라이브러리 로드 ---
+if [[ -f "${BOT_HOME}/lib/continue-sites.sh" ]]; then
+    source "${BOT_HOME}/lib/continue-sites.sh"
+fi
 
 # --- Completion trap: 비정상 종료 시에도 반드시 로그 기록 ---
 _TASK_DONE=false
@@ -120,7 +125,9 @@ if [[ "$(echo "$TASK_CONFIG" | jq -r '.disabled // false')" == "true" ]]; then
     exit 0
 fi
 # enabled: false 태스크 조용히 건너뜀 (기본값 true)
-if [[ "$(echo "$TASK_CONFIG" | jq -r '.enabled // true')" == "false" ]]; then
+# NOTE: jq `//` 연산자는 null+false 둘 다 fallback 트리거 → `.enabled // true` 는
+#       `.enabled: false` 일 때도 true 반환하는 버그. has() 명시 검사로 교정.
+if [[ "$(echo "$TASK_CONFIG" | jq -r 'if has("enabled") then .enabled else true end')" == "false" ]]; then
     log "SKIPPED (enabled: false)"
     _TASK_DONE=true
     exit 0
@@ -179,6 +186,9 @@ ALLOW_EMPTY_RESULT=$(echo "$TASK_CONFIG" | jq -r '.allowEmptyResult // false')
 SUCCESS_PATTERN=$(echo "$TASK_CONFIG" | jq -r '.successPattern // empty')
 SCRIPT=$(echo "$TASK_CONFIG" | jq -r '.script // empty')
 SCRIPT_ARGS=$(echo "$TASK_CONFIG" | jq -r '.scriptArgs // "daily"')
+# Continue Sites: opt-out 플래그 (기본값 true = 활성화)
+# tasks.json에 "continueSites": false 설정 시 기존 방식 유지
+CONTINUE_SITES=$(echo "$TASK_CONFIG" | jq -r '.continueSites // true')
 # output is a JSON array like ["discord","file"]
 OUTPUT_MODES=$(echo "$TASK_CONFIG" | jq -r '.output[]? // empty')
 
@@ -245,10 +255,9 @@ unset _cur_md5
 
 # --- Market holiday guard (tasks with requiresMarket: true) ---
 if [[ "$REQUIRES_MARKET" == "true" ]]; then
-        log "SKIPPED — market closed today (holiday or weekend)"
-        _TASK_DONE=true
-        exit 0
-    fi
+    log "SKIPPED — market closed today (holiday or weekend)"
+    _TASK_DONE=true
+    exit 0
 fi
 
 # --- Duplicate run guard (atomic mkdir lock) ---
@@ -360,6 +369,10 @@ _fsm_transition "$TASK_ID" "running" "{\"name\":\"${TASK_NAME_FSM}\"}"
 _FSM_RUNNING=true
 
 log "START"
+# Trajectory: 시작 이벤트 기록
+if type trajectory_log &>/dev/null; then
+    trajectory_log start "$TASK_ID" "${MODEL:-unknown}"
+fi
 
 # --- Lounge announce: task started ---
 
@@ -369,14 +382,41 @@ EXIT_CODE=0
 if [[ -n "$SCRIPT" ]]; then
     # script 경로의 ~ 확장
     SCRIPT_PATH="${SCRIPT/#\~/$HOME}"
+    # 명시적 env var 치환만 수행 — envsubst는 undefined 변수를 빈 문자열로 삼켜서
+    # 멀쩡한 경로를 auto-disable시키는 위험이 있음. 지원 변수만 나열.
+    SCRIPT_PATH="${SCRIPT_PATH//\$BOT_HOME/$BOT_HOME}"
+    SCRIPT_PATH="${SCRIPT_PATH//\$\{BOT_HOME\}/$BOT_HOME}"
+    SCRIPT_PATH="${SCRIPT_PATH//\$HOME/$HOME}"
+    # 치환 후에도 `$` 가 남아 있으면 지원하지 않는 env var — auto-disable 전에 경고.
+    if [[ "$SCRIPT_PATH" == *'$'* ]]; then
+        log "ERROR: unsupported env var in script path: $SCRIPT_PATH (지원: \$BOT_HOME, \$HOME)"
+        _TASK_DONE=true
+        exit 1
+    fi
     if [[ ! -x "$SCRIPT_PATH" ]]; then
         log "ERROR: script not found or not executable: $SCRIPT_PATH"
+        # auto-disable 자체가 실패하면(권한/원장 문제) 눈에 보이게 남긴다.
+        if ! _permanent_disable_task "$TASK_ID" "script_not_found" "$SCRIPT_PATH"; then
+            log "ERROR: _permanent_disable_task failed for $TASK_ID — manual intervention required"
+        fi
+        _fsm_transition "$TASK_ID" "failed" \
+            "{\"exitCode\":127,\"reason\":\"script_not_found\",\"autoDisabled\":true,\"script\":\"$SCRIPT_PATH\"}"
         _TASK_DONE=true
         exit 1
     fi
     RESULT=$("$SCRIPT_PATH" "$SCRIPT_ARGS" 2>>"${BOT_HOME}/logs/cron.log") || EXIT_CODE=$?
 else
-    RESULT=$("$BOT_HOME/bin/retry-wrapper.sh" "$TASK_ID" "$PROMPT" "$ALLOWED_TOOLS" "$TIMEOUT" "$MAX_BUDGET" "$RESULT_RETENTION" "$MODEL" "$TASK_MAX_RETRIES") || EXIT_CODE=$?
+    # Continue Sites: LLM 태스크에 다단계 복구 적용
+    # - continueSites != false 이고, continue-sites.sh가 로드되어 있으면 run_with_recovery 사용
+    # - 그 외: 기존 retry-wrapper 직접 호출
+    if [[ "$CONTINUE_SITES" != "false" ]] && type run_with_recovery &>/dev/null; then
+        log "CONTINUE_SITES: enabled — 다단계 복구 모드"
+        RESULT=$(run_with_recovery "$TASK_ID" "$BOT_HOME/bin/retry-wrapper.sh" \
+            "$TASK_ID" "$PROMPT" "$ALLOWED_TOOLS" "$TIMEOUT" "$MAX_BUDGET" \
+            "$RESULT_RETENTION" "$MODEL" "$TASK_MAX_RETRIES") || EXIT_CODE=$?
+    else
+        RESULT=$("$BOT_HOME/bin/retry-wrapper.sh" "$TASK_ID" "$PROMPT" "$ALLOWED_TOOLS" "$TIMEOUT" "$MAX_BUDGET" "$RESULT_RETENTION" "$MODEL" "$TASK_MAX_RETRIES") || EXIT_CODE=$?
+    fi
 fi
 
 if [[ $EXIT_CODE -ne 0 ]]; then
@@ -387,7 +427,11 @@ if [[ $EXIT_CODE -ne 0 ]]; then
     fi
 fi
 if [[ $EXIT_CODE -ne 0 ]]; then
-    log "FAILED (exit: $EXIT_CODE)"
+    if [[ -n "${JARVIS_RECOVERY_STAGE:-}" ]]; then
+        log "FAILED (exit: $EXIT_CODE) — Continue Sites: 전 단계(1~5) 복구 실패"
+    else
+        log "FAILED (exit: $EXIT_CODE)"
+    fi
     # AUTH_ERROR 즉시 감지: 첫 실패에서 ntfy 발송 (Circuit Breaker 3회 대기 없이)
     if echo "$RESULT" | grep -qE '"is_error":true.*"duration_api_ms":0|AUTH_ERROR|Not logged in'; then
         _auth_cooldown="${BOT_HOME}/state/auth-alerted-expired.ts"
@@ -437,11 +481,24 @@ if [[ $EXIT_CODE -ne 0 ]]; then
         unset _CB_AUTO_FIX _EXTRA_DETAIL
     fi
     unset _cb_new
+    # Trajectory: 실패 종료 이벤트 기록
+    if type trajectory_log &>/dev/null; then
+        trajectory_log end "$TASK_ID" "$EXIT_CODE"
+    fi
     _TASK_DONE=true
     exit "$EXIT_CODE"
 fi
 
-log "SUCCESS"
+# Continue Sites: 복구 단계에서 성공한 경우 로그 보강
+if [[ "${JARVIS_RECOVERY_STAGE:-1}" -gt 1 ]]; then
+    log "SUCCESS (recovered at stage ${JARVIS_RECOVERY_STAGE})"
+else
+    log "SUCCESS"
+fi
+# Trajectory: 성공 종료 이벤트 기록
+if type trajectory_log &>/dev/null; then
+    trajectory_log end "$TASK_ID" 0
+fi
 # circuit breaker: 성공 시 초기화
 if [[ -f "$_CB_FILE" ]]; then rm -f "$_CB_FILE" 2>/dev/null || true; fi
 # FSM: running → done 전이

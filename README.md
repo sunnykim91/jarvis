@@ -1,5 +1,9 @@
 # Jarvis
 
+> **⚠️ Migration Notice (2026-04-17)**: Runtime data relocated from `~/.jarvis/` → `~/jarvis/runtime/`.
+> Existing installations: `~/.jarvis` remains as a backward-compatible symlink through **2026-10-17** (D+180).
+> Fresh installs: use `~/jarvis/runtime/` directly. See [docs/A2-MIGRATION.md](infra/docs/A2-MIGRATION.md) (upcoming).
+
 <p align="center">
   <strong>AI operations platform that manages itself 24/7</strong><br>
   Discord Bot + RAG Knowledge Base + Insight Layer + Self-Healing Automation
@@ -42,7 +46,9 @@ Zero API charges — runs on a Claude subscription. 100% of your data stays on y
 |:---:|------|------|
 | **Interface** | Discord (text + voice) | 24/7 conversational UI. 16+ slash commands, buttons, voice recognition |
 | **Brain** | Claude + 8 AI agent teams | Chat, analysis, code generation, decision-making |
-| **Memory** | RAG (LanceDB) + Insight Layer | 10,000+ doc search + daily behavioural metrics analysis |
+| **Harness** | Prompt Harness + Progressive Compaction + Session Handoff | Tiered prompt loading (77% token savings), 3-stage context management (40K/60K/80K), structured state transfer between sessions |
+| **Memory** | RAG (LanceDB) + **LLM Wiki** + Insight Layer + **Importance Gate** | 10,000+ doc search + Stateful wiki + behavioural metrics + Mem0-style scoring (score ≥ 3 only stored) |
+| **Defense** | BoundedMap + Error Ledger + API Semaphore + Failure Rule Engine | Memory leak prevention, silent error tracking, concurrent API protection, auto pattern matching for known failures |
 | **Automation** | 99 scripts + 40+ crons (LaunchAgents on macOS, PM2 on Linux) | Self-healing, dawn audits, news briefing, auto code execution |
 | **Integration** | MCP + Google Calendar + GitHub | External service connectivity |
 
@@ -53,10 +59,14 @@ Zero API charges — runs on a Claude subscription. 100% of your data stays on y
 | 💬 | **Discord Bot** | 24/7 chat with streaming, voice recognition (Whisper STT), per-channel personas, 16+ slash commands |
 | 👥 | **Multi-User** | Per-user isolated memory, pairing codes for new users, family mode with privacy boundaries |
 | 📚 | **RAG Knowledge Base** | Long-term memory. BM25 + vector hybrid search across 10,000+ documents |
+| 🗂️ | **LLM Wiki** | [Karpathy's 3-layer pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (Raw/Wiki/Schema). 4 ingest paths: realtime keyword routing, background LLM digest (Haiku), nightly batch synthesis (03:30), weekly lint (Sunday 04:00). Domain wikis (`career`/`trading`/`ops`/`knowledge`) + per-user pages. Feeds Discord bot, Board API, and Map NPCs. Knowledge compounds — new info updates existing pages, not appends |
 | 🧠 | **Insight Layer** | Daily auto-generated behavioural report — detects activity trends, focus shifts, situational context |
 | 📋 | **Dev-Queue** | AI-extracted action items auto-queued, then auto-executed by `jarvis-coder.sh` — hands-free development |
 | 🤖 | **8 AI Teams** | Council, Infra, Record, Brand, Career, Academy, Trend, Recon — each with specialised agents |
 | 🔧 | **Self-Healing** | Watchdog auto-restart, LaunchAgent guardian (3min), dawn code audits, cron failure tracking |
+| 🏗️ | **Prompt Harness** | [Anthropic harness engineering](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) — Tier 0 (core, always <3KB) / Tier 1 (contextual, keyword-triggered). Progressive Compaction at 40K/60K/80K tokens. 77% system prompt reduction |
+| 🛡️ | **Defense Layers** | BoundedMap (memory leak prevention), Error Ledger (JSONL audit trail), API Semaphore (concurrent call protection), Failure Rule Engine (auto pattern learning), Symlink Health Check (hourly validation) |
+| 📢 | **Notification Formatter** | Cron messages get auto-headers (`> 🟢/🟡/🔴 taskname · HH:MM KST`), noise gate (suppress pure-success), severity-based Discord Embeds (Uptime Kuma pattern) |
 | 🔒 | **100% Local** | No cloud. No subscriptions. All data stays on your machine |
 | 🔌 | **MCP Integration** | Home Assistant, GitHub, Slack, Notion via [MCP ecosystem](https://github.com/topics/mcp-server) |
 
@@ -64,7 +74,7 @@ Zero API charges — runs on a Claude subscription. 100% of your data stays on y
 
 |  | **Jarvis** | **Claude Memory** | **ChatGPT Memory** | **[OpenClaw](https://docs.openclaw.ai) Dreaming** |
 |---|:---:|:---:|:---:|:---:|
-| **Memory** | RAG + Insight Layer (metrics-driven) | File-based (CLAUDE.md + Auto Dream) | Inject-all (every memory, every turn) | 3-phase sleep cycle (Light → REM → Deep) |
+| **Memory** | RAG + **LLM Wiki** + Insight Layer | File-based (CLAUDE.md + Auto Dream) | Inject-all (every memory, every turn) | 3-phase sleep cycle (Light → REM → Deep) |
 | **Trend Detection** | Yes (topic freq shifts, entity momentum) | No | No | Yes (REM-phase pattern extraction) |
 | **Automation** | 99 scripts + self-healing | No (CLI tool) | No | 1 cron (dreaming sweep) |
 | **Autonomous Coding** | Yes (Dev-Queue → jarvis-coder) | No | No | No |
@@ -88,38 +98,115 @@ Zero API charges — runs on a Claude subscription. 100% of your data stays on y
 
 ## Quick Start
 
+### Which plan do I need?
+
+| Setup | What you get | AI requirement | Cost |
+|-------|-------------|----------------|------|
+| **Standard** | Discord bot + 80 cron automations | Claude Max **or** Pro subscription | $20/mo (Pro) or $100/mo (Max) |
+| **Full** | Standard + RAG long-term memory | Claude subscription + Ollama (free, local) | same + 0 |
+
+> **Claude Max** = unlimited usage, best for 24/7 bot. **Claude Pro** = works fine, may hit rate limits under heavy use.
+> **Ollama** = free, open-source AI that runs locally. Only needed for RAG (document search + memory). The Discord bot itself runs on Claude.
+
+---
+
+### Step 0: Prerequisites
+
+1. **Claude Code CLI** (the brain)
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   claude   # opens browser to authenticate — log in with your Anthropic account
+   ```
+2. **Node.js 22+** and **Python 3.10+**
+   ```bash
+   node -v   # should be 22+
+   python3 --version
+   ```
+
+### Step 1: Get a Discord Bot Token
+
+> If you already have a token, skip to Step 2.
+
+1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
+2. Click **"New Application"** → name it (e.g., "Jarvis") → **Create**
+3. Left sidebar → **"Bot"** tab → click **"Reset Token"** → **Copy the token** (save it!)
+4. Scroll down → enable **"Message Content Intent"** toggle → Save
+5. Left sidebar → **"OAuth2"** → **"URL Generator"**:
+   - Scopes: `bot`, `applications.commands`
+   - Bot permissions: `Send Messages`, `Read Message History`, `Attach Files`, `Use Slash Commands`
+6. Copy the generated URL → open in browser → invite the bot to your Discord server
+
+### Step 2: Clone & Setup
+
 ```bash
 git clone https://github.com/Ramsbaby/jarvis.git && cd jarvis
 ```
 
-### Step 0: Prerequisites
+#### ⚡ Option A — Interactive Onboarding (Recommended)
 
-- **Claude Max or Pro subscription** + **Claude Code CLI** installed and authenticated
-  ```bash
-  npm install -g @anthropic-ai/claude-code
-  claude   # authenticate in browser on first run
-  ```
-- **Node.js 22+** and **jq**
+Open the project in **Claude Code** and run:
 
-### Step 1: Discord Bot + Automation
-
-```bash
-python scripts/setup_infra.py
+```
+/onboarding
 ```
 
-> **Requires**: Node.js 22+, Discord bot token, Claude Code CLI
-> **Detailed guide**: [`infra/CLAUDE-SETUP-GUIDE.md`](infra/CLAUDE-SETUP-GUIDE.md) — comprehensive step-by-step including MCP, personas, and context setup
+The onboarding wizard guides you through Steps 0–14 (idempotent — re-runnable safely):
 
-### Step 2: RAG — Long-Term Memory (Optional)
+| Step | What it does |
+|------|-------------|
+| 0 | Checks Node.js 18+, git, Ollama (optional — RAG only) |
+| 1 | Detects installation state → **[V]** verify only / **[U]** update specific values / **[R]** full reinstall |
+| 2–5 | Collects tokens interactively — skips steps whose values are already configured |
+| 6 | Creates/updates `~/.jarvis/.env` + 8 data directories — preserves existing values with `--merge` |
+| 7 | Runs `npm install` + copies `*.example.json` config templates (skips existing files) |
+| 8 | **RAG setup** (optional) — if Ollama detected, runs `python3 scripts/setup_rag.py` (~400MB model) |
+| 9 | Asks: **Auto-update** or **Manual-update**? (skips if policy already set) |
+| 10 | Creates `🚀jarvis-update` Discord channel + registers system persona |
+| 11 | Installs LaunchAgents (macOS) or PM2 + cron (Linux) — skips already-running agents |
+| 12 | Runs full verification: node_modules · bot syntax · data dirs · `.env` keys |
+| 13 | Confirms bot startup via log output |
+| 14 | Prints completion summary |
+
+**Auto-update**: When a new release is detected at 03:00 KST, Jarvis pulls latest code, syncs files, restarts the bot, and posts a notice to `#🚀jarvis-update`. Uses semver comparison (upstream > installed only).
+
+**Manual-update**: Posts a release alert to `#🚀jarvis-update` and waits for you to update.
+
+---
+
+#### Option B — Python Wizard
 
 ```bash
-python scripts/setup_rag.py
+python scripts/setup_infra.py    # paste your Discord token when prompted
 ```
 
-> **Requires**: [Ollama](https://ollama.com/download) running locally
+The setup wizard will:
+- Check Node.js, create data directories
+- Ask for your **Discord bot token** (from Step 1)
+- Install dependencies and configure the bot
 
-### WSL2 / Linux — Start with PM2
+> **Detailed guide**: [`infra/CLAUDE-SETUP-GUIDE.md`](infra/CLAUDE-SETUP-GUIDE.md) — MCP servers, personas, context setup, and troubleshooting
 
+### Step 3: RAG — Long-Term Memory (Optional, recommended)
+
+This gives Jarvis the ability to search past conversations and documents.
+
+```bash
+# Install Ollama first (free, local AI for embeddings)
+# macOS:
+brew install ollama && ollama serve
+
+# Linux:
+curl -fsSL https://ollama.com/install.sh | sh && ollama serve
+
+# Then run RAG setup:
+python scripts/setup_rag.py    # downloads ~400MB embedding model, takes 2-5 min
+```
+
+### Platform-specific start
+
+**macOS** — auto-starts via LaunchAgent (setup_infra.py configures this)
+
+**WSL2 / Linux** — use PM2:
 ```bash
 npm install -g pm2
 pm2 start infra/ecosystem.config.cjs
@@ -158,9 +245,11 @@ Discord voice messages are automatically transcribed via **OpenAI Whisper** (Kor
 
 Drop a file in Discord and it's automatically indexed into RAG. Your knowledge base grows as you chat.
 
-### Auto Memory Extraction
+### Auto Memory Extraction with Importance Gate
 
 Jarvis detects important information in conversations and auto-extracts it to long-term memory — preferences, facts, corrections. No manual `/remember` needed.
+
+Each extracted fact is scored 1-5 by the LLM ([Mem0 pattern](https://arxiv.org/abs/2504.19413)). **Only score ≥ 3 is stored** — reduces memory bloat by 40-60%. Say "잊어줘" (forget this) to delete specific facts.
 
 ### Interactive Buttons
 
@@ -178,9 +267,51 @@ Every response includes contextual action buttons:
 - Per-channel **personas** — different personality per channel (`personas.json`)
 - **Message debouncing** — consecutive messages batched (1.5s) into single Claude call
 
-## RAG Knowledge Base + Insight Layer
+## Memory Architecture
 
-Two layers work together — RAG retrieves facts, the Insight Layer understands context.
+Three layers work together — LLM Wiki accumulates structured knowledge, RAG retrieves raw context, the Insight Layer understands behavioural patterns.
+
+```
+🗂️  LLM Wiki (daily digest)          📚 RAG Layer (per-query)          📊 Insight Layer (daily)
+  profile.md / work.md /               semantic search across              "career topic surged 534x"
+  trading.md / projects.md             10,000+ indexed documents           "focus shifted to interviews"
+  (Stateful — pages updated,                    │                                    │
+   not just appended)                           │                                    │
+              │                                 │                                    │
+              └─────────────────┬───────────────┘────────────────────────────────────┘
+                                ▼
+                       Claude responds with
+                       full situational awareness
+```
+
+### LLM Wiki
+
+Inspired by [Andrej Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Transforms raw conversation sessions into a **Stateful, compounding knowledge base**.
+
+| | Traditional RAG | LLM Wiki |
+|---|---|---|
+| **Storage** | Raw text chunks | Structured `.md` wiki pages |
+| **State** | Stateless (re-search each query) | Stateful (pages updated, not appended) |
+| **Processing** | Index → retrieve | Claude Haiku digests → integrates into existing pages |
+| **Growth** | Accumulates independently | Compounds — new info updates existing knowledge |
+
+**7 wiki categories** (`~/.jarvis/wiki/pages/{userId}/`):
+
+| Page | Captures |
+|------|---------|
+| `profile.md` | Name, job, family basics |
+| `work.md` | Tech stack, company, career goals |
+| `trading.md` | Portfolio, investment strategy, watchlist |
+| `projects.md` | Ongoing projects (Jarvis bot, side projects) |
+| `preferences.md` | Habits, likes/dislikes, routines |
+| `health.md` | Exercise, health, sleep patterns |
+| `travel.md` | Trip records and plans |
+
+**How it works**: Every night (03:00) the session summariser digests today's conversations via Claude Haiku → new facts are routed to the correct wiki page → pages are updated (not just appended) → context is injected into the next session's system prompt.
+
+### RAG Knowledge Base + Insight Layer
+
+Two additional layers work together — RAG retrieves raw facts, the Insight Layer understands context.
 
 ```
 📊 Insight Layer (daily, ~1.2KB)                 📚 RAG Layer (per-query)
@@ -234,7 +365,13 @@ Jarvis doesn't just chat — it **writes code**.
 </p>
 <p align="center"><em>Automated system health check: 10 services monitored every 6 hours</em></p>
 
-Jarvis doesn't just run — it **heals itself**. 99 automation scripts, 11 LaunchAgents, 40+ cron jobs, 4-layer self-recovery (`bot-heal` → `process-recovery` → `cron-auditor` → `auto-diagnose`):
+Jarvis doesn't just run — it **heals itself**. 99 automation scripts, 11 LaunchAgents, 40+ cron jobs. Multi-layer self-recovery + systemic defense:
+
+**Harness (Anthropic 4-function pattern)**:
+- **Guides**: Tiered prompt loading — Tier 0 (always, <3KB) / Tier 1 (keyword-triggered)
+- **Sensors**: Session Handoff (structured state transfer) + Progressive Compaction (40K/60K/80K)
+- **Verification**: Tool Call Ledger (per-invocation JSONL audit) + Error Ledger (silent error tracking)
+- **Correction**: Failure Rule Engine (auto pattern learning + Bayesian confidence scoring)
 
 | | What it does | When |
 |---|---|---|
@@ -299,6 +436,9 @@ jarvis/
 │   └── bin/             # Indexer, metrics, distiller, repair
 ├── infra/               # Infrastructure & automation
 │   ├── discord/         # Discord bot + 30 handlers
+│   │   └── lib/
+│   │       ├── wiki-engine.mjs    # LLM Wiki CRUD + 7-category schema
+│   │       └── wiki-ingester.mjs  # Claude Haiku session digest pipeline
 │   ├── lib/             # Core libraries (MCP, task-store, insight-extractor)
 │   ├── bin/             # Cron executables (jarvis-cron, jarvis-coder, bot-cron)
 │   ├── scripts/         # Auditors, e2e tests, code review, deployment
@@ -307,6 +447,15 @@ jarvis/
 │   └── templates/       # Cron & LaunchAgent templates
 ├── scripts/             # Setup wizards
 └── docs/img/            # Screenshots
+```
+
+**Runtime wiki storage** (`~/.jarvis/wiki/`):
+```
+~/.jarvis/wiki/
+  schema.json            # Wiki structure rules
+  pages/{userId}/
+    profile.md / work.md / trading.md / projects.md
+    preferences.md / health.md / travel.md
 ```
 
 <details>

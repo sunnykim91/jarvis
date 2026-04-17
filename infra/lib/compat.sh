@@ -5,7 +5,12 @@
 # Provides OS-agnostic wrappers for macOS-specific commands.
 # On Linux/Docker: uses PM2 equivalents instead of launchctl.
 
-JARVIS_HOME="${JARVIS_HOME:-${BOT_HOME:-${HOME}/.local/share/jarvis}}"
+# macOS: ~/.jarvis, Linux/Docker: ~/.local/share/jarvis (하위 호환)
+if [[ -d "${HOME}/jarvis/runtime" ]]; then
+  JARVIS_HOME="${JARVIS_HOME:-${BOT_HOME:-${HOME}/jarvis/runtime}}"
+else
+  JARVIS_HOME="${JARVIS_HOME:-${BOT_HOME:-${HOME}/jarvis/runtime}}"
+fi
 IS_MACOS=false
 IS_LINUX=false
 IS_DOCKER=false

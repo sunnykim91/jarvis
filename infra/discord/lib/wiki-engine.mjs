@@ -5,7 +5,7 @@
  * devming 원본 설계 + 전역 도메인 통합 (SSoT).
  *
  * 저장 구조:
- *   ~/.jarvis/wiki/
+ *   ~/jarvis/runtime/wiki/
  *     schema.json              — 위키 스키마 (도메인 규칙)
  *     {domain}/
  *       _summary.md            — 야간 크론(wiki-ingest.mjs)이 합성하는 종합 요약
@@ -25,7 +25,7 @@ import {
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-const BOT_HOME = process.env.BOT_HOME || join(homedir(), '.jarvis');
+const BOT_HOME = process.env.BOT_HOME || join(homedir(), 'jarvis/runtime');
 export const WIKI_ROOT = join(BOT_HOME, 'wiki');
 const SCHEMA_PATH = join(WIKI_ROOT, 'schema.json');
 
@@ -192,19 +192,30 @@ export function detectPageKey(text, schema = null) {
 
 /**
  * fact를 적절한 도메인의 _facts.md에 추가.
+ * 3번째 인자는 백워드 호환: string이면 domainOverride, object면 { domainOverride, source }
+ * source는 기록 라인에 `[source:X]` 태그로 삽입됨. 기본값 'discord'.
  * @returns {string} 추가된 도메인 키
  */
-export function addFactToWiki(_userId, fact, domainOverride = null) {
+export function addFactToWiki(_userId, fact, opts = null) {
+  let domainOverride = null;
+  let source = 'discord';
+  if (typeof opts === 'string') {
+    domainOverride = opts;
+  } else if (opts && typeof opts === 'object') {
+    domainOverride = opts.domainOverride ?? null;
+    if (typeof opts.source === 'string' && opts.source.length > 0) source = opts.source;
+  }
+
   ensureInit();
   const schema = getSchema();
   const domain = domainOverride || detectPageKey(fact, schema);
   const existing = getPage(null, domain) || '';
   const timestamp = new Date().toISOString().slice(0, 10);
 
-  // 중복 체크
+  // 중복 체크 (fact 문자열이 이미 기록되어 있으면 source 무관하게 skip — 첫 주입이 SSoT)
   if (existing.includes(fact.trim())) return domain;
 
-  const newEntry = `- [${timestamp}] ${fact.trim()}\n`;
+  const newEntry = `- [${timestamp}] [source:${source}] ${fact.trim()}\n`;
 
   if (!existing) {
     const domains = schema.domains || schema.pages || {};

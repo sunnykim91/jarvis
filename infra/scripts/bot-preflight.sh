@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-BOT_HOME="${BOT_HOME:-${HOME}/.local/share/jarvis}"
+BOT_HOME="${BOT_HOME:-${HOME}/jarvis/runtime}"
 BOT_SCRIPT="$BOT_HOME/discord/discord-bot.js"
 ENV_FILE="$BOT_HOME/discord/.env"
 NODE_BIN="${NODE_BIN:-/opt/homebrew/bin/node}"
@@ -26,19 +26,8 @@ mkdir -p "$BACKUP_DIR"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [preflight] $*" | tee -a "$LOG_FILE"; }
 
-send_ntfy() {
-    local msg="$1"
-    local topic
-    topic=$(python3 -c "import json; d=json.load(open('$MONITORING')); print(d.get('ntfy',{}).get('topic',''))" 2>/dev/null || echo "")
-    if [[ -n "$topic" ]]; then
-        curl -sf --max-time 5 \
-            -H "Title: Jarvis 봇 시작 실패" \
-            -H "Priority: urgent" \
-            -H "Tags: x,robot" \
-            -d "$msg" \
-            "https://ntfy.sh/${topic}" >/dev/null 2>&1 || true
-    fi
-}
+# Shared ntfy function
+source "${BOT_HOME}/lib/ntfy-notify.sh"
 
 # 실패: AI 자동복구 세션 시작 → 180초 대기 → exit 1 (launchd 재시작 트리거)
 fail_and_heal() {
@@ -63,7 +52,7 @@ fail_and_heal() {
 
     if (( attempts >= MAX_HEAL_ATTEMPTS )); then
         log "CRITICAL: 복구 시도 ${MAX_HEAL_ATTEMPTS}회 초과 — 수동 개입 필요"
-        send_ntfy "Jarvis 자동복구 한도 초과 (${MAX_HEAL_ATTEMPTS}회). 수동 개입 필요: $reason"
+        send_ntfy "Jarvis 봇 시작 실패" "자동복구 한도 초과 (${MAX_HEAL_ATTEMPTS}회). 수동 개입 필요: $reason" "urgent"
         log "300초 대기 (launchd 스팸 방지)..."
         sleep 300
         exit 1
@@ -101,7 +90,7 @@ fail_and_heal() {
             2>/dev/null || {
             # tmux 없는 환경 폴백: ntfy만 발송
             log "WARN: tmux 없음 — ntfy 알림만 발송"
-            send_ntfy "봇 시작 실패 (수동 개입 필요): $reason"
+            send_ntfy "Jarvis 봇 시작 실패" "수동 개입 필요: $reason" "urgent"
         }
     fi
 
@@ -115,9 +104,12 @@ fail_and_heal() {
 
 log "=== preflight 검증 시작 ==="
 
-# ── node 바이너리 확인 (가장 먼저) ────────────────────────────────────────────
+# ── node 바이너리 확인 + smoke test ──────────────────────────────────────────
 if [[ ! -x "$NODE_BIN" ]]; then
     fail_and_heal "node 없음: $NODE_BIN"
+fi
+if ! "$NODE_BIN" -e "process.exit(0)" 2>/dev/null; then
+    fail_and_heal "node smoke test 실패: $NODE_BIN (바이너리 있지만 실행 불가 — dylib/permission 문제 가능)"
 fi
 
 # ── 봇 스크립트 확인 ──────────────────────────────────────────────────────────
@@ -189,7 +181,11 @@ fi
 # exec 대신 직접 실행: 종료 후 빠른 크래시 여부 판단 가능
 # (launchd는 bash PID를 추적 → node 종료 후 bash도 종료 → launchd가 재시작)
 _start_ts=$(date +%s)
-"$NODE_BIN" "$BOT_SCRIPT"
+cd "$BOT_HOME/discord" || fail_and_heal "디렉토리 이동 실패: $BOT_HOME/discord"
+# NODE_PATH 명시 설정: Node.js가 node_modules를 자동으로 찾도록 보장 (절대 경로)
+# set -u 모드 안전 처리: 단일 라인으로 원자적 처리
+export NODE_PATH="/Users/ramsbaby/jarvis/runtime/discord/node_modules${NODE_PATH:+:$NODE_PATH}"
+"$NODE_BIN" discord-bot.js
 _exit_code=$?
 _runtime=$(( $(date +%s) - _start_ts ))
 

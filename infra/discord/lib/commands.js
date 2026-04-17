@@ -12,7 +12,7 @@ const { EmbedBuilder, MessageFlags } = discordPkg;
 import { log, sendNtfy } from './claude-runner.js';
 import { lastQueryStore } from './streaming.js';
 import { rerunQuery, clearProcessedId } from './handlers.js';
-import { userMemory } from './user-memory.js';
+import { userMemory } from '../../lib/user-memory.mjs';
 import { t } from './i18n.js';
 import { getActivities } from './lounge.js';
 
@@ -57,7 +57,7 @@ export async function handleInteraction(interaction, deps) {
     const key = interaction.customId.replace('cancel_', '');
     const proc = activeProcesses.get(key);
     if (proc?.proc) {
-      proc.proc.kill('SIGTERM');
+      proc.proc.kill('manual'); // 'manual': 사용자 수동 중단 — auto-resume 차단용
       await interaction.reply({ content: t('cmd.cancel.stopped'), flags: MessageFlags.Ephemeral });
     } else {
       await interaction.reply({ content: t('cmd.cancel.noProcess'), flags: MessageFlags.Ephemeral });
@@ -168,7 +168,7 @@ export async function handleInteraction(interaction, deps) {
     const memPath = join(BOT_HOME, 'rag', 'memory.md');
     const timestamp = new Date().toISOString().slice(0, 10);
     appendFileSync(memPath, `\n- [${timestamp}] ${text}`);
-    userMemory.addFact(interaction.user.id, text);
+    userMemory.addFact(interaction.user.id, text, 'discord-slash-remember');
     await interaction.reply({ content: t('cmd.remember.done', { content: text }) });
     log('info', 'Memory saved via /remember', { userId: interaction.user.id, text: text.slice(0, 100) });
 
@@ -258,10 +258,14 @@ export async function handleInteraction(interaction, deps) {
   } else if (commandName === 'tasks') {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
-      const { execSync } = await import('node:child_process');
+      const { execFileSync } = await import('node:child_process');
       const logPath = join(BOT_HOME, 'logs', 'cron.log');
       const today = new Date().toISOString().slice(0, 10);
-      const raw = execSync(`grep "${today}" "${logPath}" 2>/dev/null | tail -100`, { encoding: 'utf-8' });
+      let raw = '';
+      try {
+        const grepOut = execFileSync('grep', [today, logPath], { encoding: 'utf-8', maxBuffer: 512 * 1024 });
+        raw = grepOut.split('\n').slice(-100).join('\n');
+      } catch { /* grep exit 1 = no match */ }
       const taskStats = {};
       for (const line of raw.split('\n')) {
         const m = line.match(/\[([^\]]+)\] (SUCCESS|FAIL)/);
