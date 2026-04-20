@@ -252,7 +252,7 @@ enqueue_to_devqueue() {
 
     # ID: title을 slug화 (중복 방지용)
     local slug
-    slug="code-fix-$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | cut -c1-40 | sed 's/-*$//')-$(date +%s)"
+    slug="code-fix-$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-//' | cut -c1-40 | sed 's/-*$//')-$(date +%s)"
 
     local prompt_text="다음 Jarvis 코드 이슈를 분석하고 수정하라.
 
