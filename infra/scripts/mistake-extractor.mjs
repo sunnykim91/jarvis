@@ -24,6 +24,7 @@
 import {
   readFileSync, writeFileSync, existsSync, readdirSync,
   statSync, mkdirSync, appendFileSync, renameSync,
+  openSync, closeSync, unlinkSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
@@ -44,6 +45,12 @@ const MIN_FILE_BYTES   = 300;    // 이보다 작은 요약은 스킵
 const DUPLICATE_THRESHOLD = 0.65; // 기존 패턴과 유사도 이상이면 skip
 
 const DRY_RUN = process.argv.includes('--dry-run');
+// Stop 훅 전용 단일 파일 모드: --file <path> 로 특정 세션 .md 1건만 처리하고 state 갱신 skip
+// (배치 흐름 state.mistakeExtractedUntil과 무관하게 호출 가능 — 세션 종료 직후 실시간 등재용)
+const FILE_ARG_IDX = process.argv.indexOf('--file');
+const SINGLE_FILE = FILE_ARG_IDX >= 0 && process.argv[FILE_ARG_IDX + 1]
+  ? process.argv[FILE_ARG_IDX + 1]
+  : null;
 
 // ── 로거 (KST) ───────────────────────────────────────────────────────────────
 function kstNow() {
@@ -92,6 +99,92 @@ function atomicWrite(filePath, content) {
   const tmp = filePath + '.tmp.' + process.pid;
   writeFileSync(tmp, content, 'utf-8');
   renameSync(tmp, filePath);
+}
+
+// ── lockfile 기반 상호 배제 (Stop 훅 + 배치 동시 실행 경합 방지) ─────────────
+// read-modify-write 시퀀스를 직렬화. stale lock(60초+)은 강제 해제.
+function withLock(lockPath, fn) {
+  const MAX_WAIT_MS  = 10_000;
+  const STALE_MS     = 60_000;
+  const POLL_MS      = 200;
+  const start = Date.now();
+  let fd = null;
+  while (Date.now() - start < MAX_WAIT_MS) {
+    try {
+      fd = openSync(lockPath, 'wx');
+      break;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      // stale 판정
+      try {
+        const st = statSync(lockPath);
+        if (Date.now() - st.mtimeMs > STALE_MS) {
+          log(`stale lock 제거: ${lockPath} (age ${Math.round((Date.now()-st.mtimeMs)/1000)}s)`);
+          try { unlinkSync(lockPath); } catch {}
+          continue;
+        }
+      } catch { /* 이미 사라짐 */ }
+      // 짧은 busy-wait (CLI 스크립트라 허용)
+      const until = Date.now() + POLL_MS;
+      while (Date.now() < until) { /* wait */ }
+    }
+  }
+  if (fd === null) {
+    throw new Error(`lock acquire timeout (${MAX_WAIT_MS}ms): ${lockPath}`);
+  }
+  try {
+    return fn();
+  } finally {
+    try { closeSync(fd); } catch {}
+    try { unlinkSync(lockPath); } catch {}
+  }
+}
+
+// ── 서킷브레이커 (Haiku 연속 실패 3회 → 24h open) ────────────────────────────
+// 비용 폭주 방지: LLM 호출 반복 실패 상황에서 extractor 자체를 24h 비활성화.
+// state: closed(정상) | open(차단) | half-open(쿨다운 후 1회 시도 허용 — 자동)
+const CIRCUIT_FILE = join(homedir(), 'jarvis/runtime/state/mistake-extractor-circuit.json');
+const CIRCUIT_FAIL_THRESHOLD = 3;
+const CIRCUIT_COOLDOWN_MS = 24 * 3600 * 1000;
+
+function loadCircuit() {
+  try { return JSON.parse(readFileSync(CIRCUIT_FILE, 'utf-8')); }
+  catch { return { consecutiveFails: 0, lastFailTs: 0, state: 'closed', nextRetryTs: 0 }; }
+}
+function saveCircuit(c) {
+  try {
+    mkdirSync(dirname(CIRCUIT_FILE), { recursive: true });
+    atomicWrite(CIRCUIT_FILE, JSON.stringify(c, null, 2));
+  } catch (e) { log(`circuit 저장 실패 (무시): ${e.message}`); }
+}
+function circuitCheck() {
+  const c = loadCircuit();
+  if (c.state === 'open' && Date.now() < c.nextRetryTs) {
+    const remMin = Math.round((c.nextRetryTs - Date.now()) / 60000);
+    return { allow: false, reason: `circuit OPEN (재시도까지 ${remMin}분, 연속실패 ${c.consecutiveFails}회, lastFail=${new Date(c.lastFailTs).toISOString()})` };
+  }
+  return { allow: true };
+}
+function circuitOnSuccess() {
+  const c = loadCircuit();
+  if (c.consecutiveFails > 0 || c.state !== 'closed') {
+    saveCircuit({ consecutiveFails: 0, lastFailTs: 0, state: 'closed', nextRetryTs: 0 });
+    log('circuit closed (회복)');
+  }
+}
+function circuitOnFailure(errMsg) {
+  const c = loadCircuit();
+  c.consecutiveFails = (c.consecutiveFails || 0) + 1;
+  c.lastFailTs = Date.now();
+  if (c.consecutiveFails >= CIRCUIT_FAIL_THRESHOLD) {
+    c.state = 'open';
+    c.nextRetryTs = Date.now() + CIRCUIT_COOLDOWN_MS;
+    log(`circuit OPEN (연속 ${c.consecutiveFails}회 실패, 24h 쿨다운): ${errMsg?.slice(0, 120)}`);
+  } else {
+    log(`circuit fail ${c.consecutiveFails}/${CIRCUIT_FAIL_THRESHOLD}: ${errMsg?.slice(0, 120)}`);
+  }
+  saveCircuit(c);
+  return c;
 }
 
 // ── state 로드/저장 ──────────────────────────────────────────────────────────
@@ -249,11 +342,15 @@ function filterDuplicates(candidates, existingPatterns) {
   return kept;
 }
 
-// ── learned-mistakes.md에 append ─────────────────────────────────────────────
+// ── learned-mistakes.md에 append (flock으로 read-modify-write 직렬화) ────────
 function appendMistakes(mistakes) {
   if (!existsSync(MISTAKES_FILE)) {
     throw new Error(`${MISTAKES_FILE} 부재 — 최초 수동 생성 필요`);
   }
+  return withLock(MISTAKES_FILE + '.lock', () => _appendMistakesUnsafe(mistakes));
+}
+
+function _appendMistakesUnsafe(mistakes) {
   const body = readFileSync(MISTAKES_FILE, 'utf-8');
 
   // frontmatter / 헤더 분리
@@ -300,13 +397,40 @@ function buildStdoutSummary(added, skipped, duration) {
 // ── 메인 ─────────────────────────────────────────────────────────────────────
 async function main() {
   const t0 = Date.now();
-  log(`=== mistake-extractor 시작${DRY_RUN ? ' (DRY-RUN)' : ''} ===`);
+  log(`=== mistake-extractor 시작${DRY_RUN ? ' (DRY-RUN)' : ''}${SINGLE_FILE ? ' (SINGLE_FILE)' : ''} ===`);
+
+  // 서킷브레이커 — Haiku 연속 실패 시 24h 차단 (DRY_RUN은 무시)
+  if (!DRY_RUN) {
+    const gate = circuitCheck();
+    if (!gate.allow) {
+      log(`차단: ${gate.reason}`);
+      console.log(`🛑 오답노트 자동 추출 — ${gate.reason}`);
+      return;
+    }
+  }
 
   const state = loadState();
   const sinceMs = state.mistakeExtractedUntil || (Date.now() - 48 * 3600_000); // 초회 48h
   log(`state.mistakeExtractedUntil=${new Date(sinceMs).toISOString()}`);
 
-  const sessionFiles = collectSessionFiles(sinceMs);
+  let sessionFiles;
+  if (SINGLE_FILE) {
+    if (!existsSync(SINGLE_FILE)) {
+      log(`--file 대상 없음: ${SINGLE_FILE}`);
+      console.log('🤖 오답노트 자동 추출 — 세션 파일 없음');
+      return;
+    }
+    const st = statSync(SINGLE_FILE);
+    if (st.size < MIN_FILE_BYTES) {
+      log(`--file 너무 작음 (${st.size} < ${MIN_FILE_BYTES}): ${SINGLE_FILE}`);
+      console.log('🤖 오답노트 자동 추출 — 세션 분량 부족');
+      return;
+    }
+    sessionFiles = [{ path: SINGLE_FILE, mtime: st.mtimeMs, size: st.size }];
+    log(`--file 단일 파일 모드: ${SINGLE_FILE}`);
+  } else {
+    sessionFiles = collectSessionFiles(sinceMs);
+  }
   if (sessionFiles.length === 0) {
     log('신규 세션 요약 없음 — 종료');
     console.log('🤖 오답노트 자동 추출 — 신규 세션 요약 없음');
@@ -321,8 +445,10 @@ async function main() {
   let raw;
   try {
     raw = callClaude(prompt);
+    circuitOnSuccess();
   } catch (e) {
     log(`Haiku 호출 실패: ${e.message}`);
+    if (!DRY_RUN) circuitOnFailure(e.message);
     console.log(`❌ 오답노트 추출 실패 — LLM 호출 오류: ${e.message}`);
     process.exit(1);
   }
@@ -332,7 +458,7 @@ async function main() {
   if (candidates.length === 0) {
     log('신규 지적 패턴 없음');
     console.log('🤖 오답노트 자동 추출 — 신규 지적 패턴 없음');
-    if (!DRY_RUN) {
+    if (!DRY_RUN && !SINGLE_FILE) {
       state.mistakeExtractedUntil = Date.now();
       state.lastRun = kstISO();
       saveState(state);
@@ -365,12 +491,32 @@ async function main() {
       console.log(`❌ append 실패: ${e.message}`);
       process.exit(1);
     }
+
+    // Ledger append (SSoT: 배치/Stop훅/oops 세 진입점 공통 감사 트레일)
+    // append-only JSONL — 주간 감사가 이 원장을 읽어 "반복 패턴"·"진입점별 정확도" 분석
+    try {
+      const ledgerFile = join(BOT_HOME, 'state', 'mistake-ledger.jsonl');
+      const ledgerLine = JSON.stringify({
+        ts: kstISO(),
+        source: SINGLE_FILE ? 'stop-hook' : 'batch-daily',
+        count: final.length,
+        titles: final.map(m => (m.pattern || m.title || '(untitled)').slice(0, 80)),
+        session_file: SINGLE_FILE || null,
+        duration_s: Number(((Date.now() - t0) / 1000).toFixed(1)),
+      }) + '\n';
+      appendFileSync(ledgerFile, ledgerLine);
+      log(`ledger append: ${ledgerFile}`);
+    } catch (e) {
+      log(`ledger append 실패 (무시): ${e.message}`);
+    }
   }
 
-  state.mistakeExtractedUntil = Date.now();
-  state.lastRun = kstISO();
-  state.totalExtracted = (state.totalExtracted || 0) + final.length;
-  saveState(state);
+  if (!SINGLE_FILE) {
+    state.mistakeExtractedUntil = Date.now();
+    state.lastRun = kstISO();
+    state.totalExtracted = (state.totalExtracted || 0) + final.length;
+    saveState(state);
+  }
 
   const dur = ((Date.now() - t0) / 1000).toFixed(1);
   log(`=== mistake-extractor 완료: +${final.length}건, ${dur}초 ===`);

@@ -667,6 +667,25 @@ async function main() {
     }
   } catch { /* inbox may not exist */ }
 
+  // 3c. Wiki (Jarvis SSoT 메모리) — 재귀, 전체 .md 포함
+  // Compound Engineering 루프 핵심: meta/learned-mistakes.md, meta/eureka.jsonl 같은
+  // 오답노트·통찰 저장소가 rag_search로 회수되어야 과거 실수 재발을 막는다.
+  async function collectWikiMd(dirPath) {
+    try {
+      const entries = await readdir(dirPath, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const fullPath = join(dirPath, e.name);
+        if (e.isDirectory()) {
+          await collectWikiMd(fullPath);
+        } else if (extname(e.name) === '.md') {
+          targets.push(fullPath);
+        }
+      }
+    } catch { /* wiki may not exist */ }
+  }
+  await collectWikiMd(join(BOT_HOME, 'wiki'));
+
   // 4. 팀 보고서 & 공유 인박스 (팀 간 통신 이력)
   for (const dir of ['reports', 'shared-inbox']) {
     try {
