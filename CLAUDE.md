@@ -34,6 +34,26 @@ node ~/jarvis/infra/scripts/gen-tasks-index.mjs
 - Shell scripts: `set -euo pipefail`, quote all variables, trap cleanup
 - Naming: `[domain]-[target]-[action]` (e.g., `rag-index-safe.sh`)
 
+## Golden Path — 작업 착수 전 고정 순서 (2026-04-21)
+
+크고 모호한 요청을 받으면 다음 순서를 기본 흐름으로 삼습니다.
+2026-04-15 메이커 에반 유튜브("GStack + Superpowers 후기")의 워크플로우를 Jarvis 철학(Iron Laws · SSoT · 집사 페르소나)으로 재구성한 것.
+
+1. `/brainstorm` — 아이디어 인터뷰 (역질문 15~20개로 암묵 공백 선제 노출) + UI mockup 3안
+2. 필요 시 `/office-hours` — 옵션 A vs B 트레이드오프 매트릭스 의사결정
+3. `/autoplan` — 단계별 계획 분해 (Writing Plans = 설계 도면)
+4. `/plan-review` — 11섹션 체크리스트 엄격 리뷰
+5. `/verify` — 7-Gate + Contrarian Challenge (독립 감사관 Agent)
+6. worktree 분리 → `/codex` 또는 `/orchestrate` 병렬 구현
+7. 완료 후 `/design-review` — AI slop 감식 (생산 후 시각 감사)
+8. `/ship` → `/retro` + 필요 시 `/oops`로 오답노트 실시간 기재
+
+**스킵 규칙**: 주인님이 "그냥 해" 하시면 1~4 단계 생략 가능 — 단, 생략 시 리스크 고지 필수. 작은 버그 수정·문서 편집은 전체 플로우 강제 안 함.
+
+**SSoT**: 본 파일(`~/jarvis/CLAUDE.md`)이 Golden Path의 단일 진실 공급원. worktree 복제본은 주기적으로 git merge로 동기.
+
+**기능 매트릭스 출처**: `~/jarvis/rag/analyses/evan-gstack-superpowers-20260421.md` (영상 분석 + Verify 감사관 지적 반영).
+
 ## Surface Memory Boundary — 표면 통합 메모리 경계
 
 **원칙**: Jarvis는 **뇌 하나**(`~/jarvis/runtime/wiki/` + RAG + memory files). 여러 표면(디스코드/Claude Code CLI/macOS 앱)은 그 뇌의 입·출력 단말일 뿐. 읽기는 표면 무관하게 공유되고, 쓰기도 동일한 저장소로 수렴한다.
