@@ -1,24 +1,24 @@
 {
-  "generatedAt": "2026-04-20T13:27:32.521Z",
+  "generatedAt": "2026-04-21T00:59:41.707Z",
   "source": "~/jarvis/runtime/config/tasks.json",
-  "totalTasks": 98,
+  "totalTasks": 100,
   "teamDistribution": {
     "standup": 1,
     "president": 13,
     "infra-lead": 16,
     "finance": 8,
     "trend-lead": 8,
-    "record-lead": 4,
+    "record-lead": 5,
     "library": 1,
     "growth-lead": 4,
     "brand-lead": 4,
     "audit-lead": 17,
     "secretary": 10,
-    "uncategorized": 12
+    "uncategorized": 13
   },
   "typeDistribution": {
     "prompt": 37,
-    "script": 61
+    "script": 63
   },
   "groups": [
     {
@@ -1604,6 +1604,38 @@
           }
         },
         {
+          "id": "user-memory-monitor",
+          "name": "사용자 메모리 오염 감시",
+          "schedule": "0 8 * * *",
+          "scheduleHuman": "매일 08:00",
+          "type": "script",
+          "handler": "user-memory-monitor.sh",
+          "team": {
+            "id": "record-lead",
+            "name": "데이터실 (메모리·RAG 백엔드)"
+          },
+          "discordChannel": "jarvis-system",
+          "model": null,
+          "priority": "daily",
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": "매일 08:00 KST. 전체 사용자(정우·보람 등) user-memory facts 총량·카테고리별 임계치 감시. boram-memory-monitor 통합 대체.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/user-memory-monitor.log",
+              "exists": false
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/user-memory-monitor-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-user-memory-monitor-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
           "id": "vault-auto-link",
           "name": "Vault 자동 링크 생성",
           "schedule": "30 6 * * *",
@@ -1767,11 +1799,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/inbox-alert.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/inbox-alert-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-inbox-alert-*.log",
@@ -1799,11 +1831,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/profile-extractor.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/profile-extractor-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-profile-extractor-*.log",
@@ -2965,9 +2997,9 @@
         },
         {
           "id": "cron-master",
-          "name": "크론 총괄 리포트 — 아침 종합",
-          "schedule": "3 6 * * *",
-          "scheduleHuman": "매일 06:03",
+          "name": "크론 총괄 리포트 — 30분 주기 감사",
+          "schedule": "*/30 * * * *",
+          "scheduleHuman": "매일 30분마다",
           "type": "script",
           "handler": "cron-master.sh",
           "team": {
@@ -2979,7 +3011,7 @@
           "priority": "daily",
           "maxBudget": null,
           "disabled": false,
-          "description": null,
+          "description": "실제 호출자는 crontab의 cron-monitoring-orchestrator.sh component proactive_monitoring (*/30). LaunchAgent plist는 legacy 경로로 보존하되 실제로는 미동작(로그상 06:03 실행 흔적 없음). 2026-04-21 실체 정합화: tasks.json 스케줄을 실제 동작(30분)에 맞춤. Discord 전송은 상태 변화·긴급(PERMA_FAILS)·주간 요약(월 09:00) 시에만 (cron-master.sh 내부 digest hash 비교). allowEmptyResult=true로 빈 출력 허용.",
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/cron-master.log",
@@ -2991,6 +3023,38 @@
             },
             "claudeStderr": {
               "pattern": "claude-stderr-cron-master-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
+          "id": "cron-master-smoke",
+          "name": "크론 마스터 regression 테스트 (주간)",
+          "schedule": "15 9 * * 1",
+          "scheduleHuman": "월요일 09:15",
+          "type": "script",
+          "handler": "cron-master-smoke.sh",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": "jarvis-system",
+          "model": null,
+          "priority": "weekly",
+          "maxBudget": null,
+          "disabled": false,
+          "description": "cron-master.sh 주요 플로우 regression 감지. 월요일 09:15 실행 — 주간 강제 리포트(09:00) 직후. 8 테스트/11 검증. PASS=11/11이면 ✅ 요약만, 하나라도 FAIL이면 실패 케이스 목록 Discord 전송. 신설: 2026-04-21 (UNLOADED[@] unbound variable 재발 방지 포함).",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/cron-master-smoke.log",
+              "exists": false
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/cron-master-smoke-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-cron-master-smoke-*.log",
               "exists": false
             }
           }
@@ -3147,7 +3211,7 @@
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/mistake-extractor-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-mistake-extractor-*.log",
