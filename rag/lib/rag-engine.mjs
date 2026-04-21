@@ -962,7 +962,9 @@ export class RAGEngine {
     } else if (domain === 'board') {
       domainWhereClause = "source LIKE '%board%'";
     } else if (domain === 'rag') {
-      domainWhereClause = "source LIKE '%/.jarvis/rag%'";
+      // dual-pattern: 호환 심링크(~/.jarvis) 만료(2026-10-17) 후에도
+      // 기존 인덱싱된 24,448개 문서가 검색되도록 옛/새 경로 둘 다 매칭. # ALLOW-DOTJARVIS
+      domainWhereClause = "(source LIKE '%/.jarvis/rag%' OR source LIKE '%/jarvis/runtime/rag%')";
     } else if (domain === 'code') {
       domainWhereClause = "chunk_type LIKE 'code-%'";
     }
