@@ -442,13 +442,45 @@ async function main() {
   const prompt = buildPrompt(bodies);
   log(`Haiku 호출 (프롬프트 ${prompt.length}자)`);
 
+  // Token-ledger append 헬퍼 (Verify 재감사 B1 지적 — Haiku 호출 회계 누락 해소)
+  // 기존 token-ledger.jsonl 스키마와 동일 구조. 한글 bytes/3 로 토큰 근사 (정확 tokenizer 없음).
+  const tokenLedgerFile = join(BOT_HOME, 'state', 'token-ledger.jsonl');
+  const appendTokenLedger = (status, resultBytes, errMsg) => {
+    try {
+      const inputTok = Math.round(prompt.length / 3);
+      const outputTok = Math.round(resultBytes / 3);
+      // Haiku-4-5 실비: input $0.80/MTok, output $4/MTok
+      const costUsd = Number((inputTok * 0.80 / 1e6 + outputTok * 4 / 1e6).toFixed(5));
+      const entry = {
+        ts: new Date().toISOString(),
+        task: 'mistake-extractor',
+        model: 'claude-haiku-4-5-20251001',
+        status,
+        input: inputTok,
+        output: outputTok,
+        cost_usd: costUsd,
+        duration_ms: Math.round(Date.now() - t0),
+        result_bytes: resultBytes,
+        source: SINGLE_FILE ? 'stop-hook' : 'batch-daily',
+        max_budget_usd: 0.10,
+      };
+      if (errMsg) entry.error = errMsg.slice(0, 120);
+      appendFileSync(tokenLedgerFile, JSON.stringify(entry) + '\n');
+      log(`token-ledger append: ${status} ${inputTok}in/${outputTok}out $${costUsd.toFixed(5)}`);
+    } catch (e) {
+      log(`token-ledger append 실패 (무시): ${e.message}`);
+    }
+  };
+
   let raw;
   try {
     raw = callClaude(prompt);
     circuitOnSuccess();
+    appendTokenLedger('success', raw.length, null);
   } catch (e) {
     log(`Haiku 호출 실패: ${e.message}`);
     if (!DRY_RUN) circuitOnFailure(e.message);
+    appendTokenLedger('failed', 0, e.message);
     console.log(`❌ 오답노트 추출 실패 — LLM 호출 오류: ${e.message}`);
     process.exit(1);
   }
