@@ -13,7 +13,7 @@ export const IS_LINUX   = os.platform() === 'linux'
 /**
  * JARVIS_HOME resolution order:
  * 1. $JARVIS_HOME env var (Docker / CI / custom installs)
- * 2. ~/.jarvis (macOS, Linux, WSL2)
+ * 2. ~/jarvis/runtime (macOS, Linux, WSL2)
  * 3. %USERPROFILE%\.jarvis (Windows native)
  */
 export const JARVIS_HOME = process.env.JARVIS_HOME

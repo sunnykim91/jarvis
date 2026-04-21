@@ -36,7 +36,7 @@ node ~/jarvis/infra/scripts/gen-tasks-index.mjs
 
 ## Surface Memory Boundary — 표면 통합 메모리 경계
 
-**원칙**: Jarvis는 **뇌 하나**(`~/.jarvis/wiki/` + RAG + memory files). 여러 표면(디스코드/Claude Code CLI/macOS 앱)은 그 뇌의 입·출력 단말일 뿐. 읽기는 표면 무관하게 공유되고, 쓰기도 동일한 저장소로 수렴한다.
+**원칙**: Jarvis는 **뇌 하나**(`~/jarvis/runtime/wiki/` + RAG + memory files). 여러 표면(디스코드/Claude Code CLI/macOS 앱)은 그 뇌의 입·출력 단말일 뿐. 읽기는 표면 무관하게 공유되고, 쓰기도 동일한 저장소로 수렴한다.
 
 ### 표면별 역할과 기억 기여 방식
 
@@ -59,7 +59,7 @@ node ~/jarvis/infra/scripts/gen-tasks-index.mjs
 [CLI 자동]    stop-wiki-ingest ───┼──► addFactToWiki(source:X)
 [모든 표면]   MCP wiki_add_fact ──┘         │
                                             ▼
-                                  ~/.jarvis/wiki/{domain}/_facts.md
+                                  ~/jarvis/runtime/wiki/{domain}/_facts.md
                                   (SSoT, source 태깅으로 감사 가능)
 ```
 

@@ -13,7 +13,7 @@
 set -euo pipefail
 
 # 설정
-BOT_HOME="${BOT_HOME:-${HOME}/.jarvis}"
+BOT_HOME="${BOT_HOME:-${HOME}/jarvis/runtime}"
 LOG_DIR="$BOT_HOME/logs"
 COMPLETION_LOG="$LOG_DIR/cron-completion-hook.log"
 METRICS_DIR="$BOT_HOME/state/cron-metrics"

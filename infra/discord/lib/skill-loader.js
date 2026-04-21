@@ -1,5 +1,5 @@
-// skill-loader.js — 공통 스킬 저장소 (~/.jarvis/skills/) 로더
-// SSoT: ~/.jarvis/skills/<name>.md
+// skill-loader.js — 공통 스킬 저장소 (~/jarvis/runtime/skills/) 로더
+// SSoT: ~/jarvis/runtime/skills/<name>.md
 // CLI, Discord, Mac 앱이 동일한 스킬 정의를 공유하기 위한 경계 모듈.
 //
 // 스킬 파일 형식:

@@ -12,7 +12,7 @@ set -euo pipefail
 
 # Environment setup
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
-BOT_HOME="${BOT_HOME:-${HOME}/.jarvis}"
+BOT_HOME="${BOT_HOME:-${HOME}/jarvis/runtime}"
 LOG_DIR="${BOT_HOME}/logs"
 mkdir -p "$LOG_DIR"
 

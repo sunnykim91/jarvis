@@ -9,8 +9,8 @@ LOG="${BOT_HOME}/logs/inbox-alert.log"
 STAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 # LaunchAgent 실행 시 .env 자동 로드 (NOTION_TOKEN 등 — Notion 상세 리포트용)
-if [[ -f "${HOME}/.jarvis/.env" ]]; then
-  set -a; source "${HOME}/.jarvis/.env"; set +a
+if [[ -f "${HOME}/jarvis/runtime/.env" ]]; then
+  set -a; source "${HOME}/jarvis/runtime/.env"; set +a
 fi
 
 mkdir -p "$(dirname "$LOG")"

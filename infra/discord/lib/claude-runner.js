@@ -306,7 +306,7 @@ export async function execRagAsync(query, opts = {}) {
 function _isSimulationTurn(userMsg) {
   if (!userMsg) return false;
   const text = userMsg.toLowerCase();
-  // 슬래시 커맨드 형태 — ~/.jarvis/skills/<name>.md 파일 존재 여부로 판정.
+  // 슬래시 커맨드 형태 — ~/jarvis/runtime/skills/<name>.md 파일 존재 여부로 판정.
   // (claude-runner 상단의 fs/path/os 임포트를 공유)
   const slashMatch = userMsg.trim().match(/^\/([a-zA-Z0-9_-]+)/);
   if (slashMatch) {
@@ -808,7 +808,7 @@ export async function* createClaudeSession(prompt, {
   }
 
   // ---------------------------------------------------------------------------
-  // 공통 스킬 주입 (~/.jarvis/skills/) — CLI·Discord·Mac 앱이 SSoT로 공유
+  // 공통 스킬 주입 (~/jarvis/runtime/skills/) — CLI·Discord·Mac 앱이 SSoT로 공유
   // 주입 우선순위:
   //   1) 슬래시 커맨드 (`/skillname args`) — 명시적, 최우선
   //   2) 채널 매칭 (skill의 channels에 현재 채널 포함)

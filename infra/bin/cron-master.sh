@@ -22,7 +22,7 @@ set -euo pipefail
 
 # 자체 로그 (Blocker #2 대응: plist StandardOutPath는 bot-cron.sh 우회 경로라 0B.
 # tee로 화면과 파일 양쪽 기록 → cron-master 본인이 죽어도 사후 조사 가능)
-SELF_LOG="${HOME}/.jarvis/logs/cron-master-self.log"
+SELF_LOG="${HOME}/jarvis/runtime/logs/cron-master-self.log"
 mkdir -p "$(dirname "$SELF_LOG")"
 exec > >(tee -a "$SELF_LOG") 2>&1
 echo ""
@@ -138,7 +138,7 @@ fi
 #   - Dry-run: CRON_MASTER_DRY_RUN=1 이면 계획만 표시, 실제 실행 skip
 #
 # 스텁 배치 기능 제거 이유:
-#   ~/.jarvis/bin → ~/jarvis/infra/bin 심링크 체인으로 git 추적 디렉토리에
+#   ~/jarvis/runtime/bin → ~/jarvis/infra/bin 심링크 체인으로 git 추적 디렉토리에
 #   stub이 무단 침투하는 설계 결함 발견 (2026-04-20 초기 구현에서 19개 침범).
 #   유령 스크립트는 감지만 하고 주인님이 수동으로 판단·처리한다.
 
@@ -282,7 +282,7 @@ for name in "${AUDIT_LOGS[@]}"; do
 done
 
 # ── 4.6.5. Phase 3c-2: 미해결 감사 경고 추적 (wiki-lint 리포트 이슈 수) ──────
-WIKI_META="${HOME}/.jarvis/wiki/meta"
+WIKI_META="${HOME}/jarvis/runtime/wiki/meta"
 LATEST_LINT_REPORT=""
 LATEST_LINT_ISSUES=0
 if [[ -d "$WIKI_META" ]]; then
@@ -301,7 +301,7 @@ fi
 # 최근 7일간 [source:discord] 태그가 1건도 안 붙으면 autoExtract 침묵으로 판정.
 # 오늘 조치 3에서 발견한 패턴의 자동 감지 장치.
 DISCORD_INJECTIONS_7D=0
-WIKI_ROOT="${HOME}/.jarvis/wiki"
+WIKI_ROOT="${HOME}/jarvis/runtime/wiki"
 if [[ -d "$WIKI_ROOT" ]]; then
   for i in 0 1 2 3 4 5 6; do
     day=$(date -v-${i}d +%Y-%m-%d 2>/dev/null || date -d "$i days ago" +%Y-%m-%d 2>/dev/null || echo "")

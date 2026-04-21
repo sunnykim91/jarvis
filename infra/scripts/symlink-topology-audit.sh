@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # symlink-topology-audit.sh
 #
-# ~/.jarvis 하위 토폴로지 정합성 감사 + 자동 복구.
+# ~/jarvis/runtime 하위 토폴로지 정합성 감사 + 자동 복구.
 #
 # Check:
 #   1. ~/jarvis/runtime/{infra,bin,lib,scripts} 가 심링크인가 (실제 디렉토리로 변했으면 파괴)
 #   2. 그 심링크들이 SSoT(~/jarvis/infra/*)를 가리키는가
-#   3. ~/.jarvis 하위 다른 절대 심링크가 SSoT 외부를 가리키는가
+#   3. ~/jarvis/runtime 하위 다른 절대 심링크가 SSoT 외부를 가리키는가
 #   4. .bak-* / .ghost-* 잔해
 #
 # Auto-recovery: Check 1·2 위반은 즉시 자동 복구 (파일 백업 후 심링크 재생성).

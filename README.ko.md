@@ -1,6 +1,6 @@
 # Jarvis
 
-> **⚠️ 마이그레이션 공지 (2026-04-17)**: 런타임 데이터 위치 변경 `~/.jarvis/` → `~/jarvis/runtime/`.
+> **⚠️ 마이그레이션 공지 (2026-04-17)**: 런타임 데이터 위치 변경 `~/jarvis/runtime/` → `~/jarvis/runtime/`.
 > 기존 설치: `~/.jarvis` 는 **2026-10-17까지** 호환성 심링크로 유지.
 > 신규 설치: `~/jarvis/runtime/` 직접 사용. [docs/A2-MIGRATION.md](infra/docs/A2-MIGRATION.md) (작성 예정).
 
@@ -256,7 +256,7 @@ Discord에 파일을 드롭하면 자동으로 RAG에 인덱싱됩니다. 채팅
 | **처리 방식** | 인덱스 → 검색 | Claude Haiku 소화 → 기존 페이지 통합 |
 | **지식 성장** | 독립적 누적 | 복리 — 새 정보가 기존 지식을 업데이트 |
 
-**7개 위키 카테고리** (`~/.jarvis/wiki/pages/{userId}/`):
+**7개 위키 카테고리** (`~/jarvis/runtime/wiki/pages/{userId}/`):
 
 | 페이지 | 저장 내용 |
 |--------|----------|
@@ -402,9 +402,9 @@ jarvis/
 └── docs/img/            # 스크린샷
 ```
 
-**런타임 위키 저장 경로** (`~/.jarvis/wiki/`):
+**런타임 위키 저장 경로** (`~/jarvis/runtime/wiki/`):
 ```
-~/.jarvis/wiki/
+~/jarvis/runtime/wiki/
   schema.json            # 위키 구조 규칙
   pages/{userId}/
     profile.md / work.md / trading.md / projects.md

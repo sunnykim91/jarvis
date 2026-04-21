@@ -66,8 +66,8 @@ discord-bot.js ──► lib/handlers.js ──► lib/claude-runner.js
                          │
                          ├──► buildWikiContextSection() (Dynamic section)
                          │         Hybrid 2-track LLM Wiki context injection:
-                         │         1) 전역 도메인: ~/.jarvis/wiki/{career,trading,ops...}/_summary.md
-                         │         2) 사용자 개인: ~/.jarvis/wiki/pages/{userId}/*.md
+                         │         1) 전역 도메인: ~/jarvis/runtime/wiki/{career,trading,ops...}/_summary.md
+                         │         2) 사용자 개인: ~/jarvis/runtime/wiki/pages/{userId}/*.md
                          │         최대 2,000자, 세션 해시 영향 없음 (오너 전용)
                          │         Ingest 경로:
                          │           - 즉시 반영: session-summarizer → addFactToWiki (키워드)
@@ -250,9 +250,9 @@ Stop hook (sync, before async hooks)
                                 (Claude Code는 stderr만 훅 피드백으로 표시)
 
 Stop hooks (async, after enforce)
-  ├─ stop-rag-sync.sh        — ~/.jarvis/ 변경 감지 시 RAG 증분 재인덱싱
+  ├─ stop-rag-sync.sh        — ~/jarvis/runtime/ 변경 감지 시 RAG 증분 재인덱싱
   ├─ stop-session-save.sh    — 세션 트랜스크립트 → 마크다운 변환 저장
-  │    └─ ~/.jarvis/context/claude-code-sessions/<project>/YYYY-MM-DD-HHMMSS.md
+  │    └─ ~/jarvis/runtime/context/claude-code-sessions/<project>/YYYY-MM-DD-HHMMSS.md
   │    → context-extractor.mjs가 다음 날 새벽 도메인별로 분류
   │    → 디버그 로깅: transcript_path 존재 여부, 크기, 저장 후 파일 확인
   │    → 저장 실패 시 원인(transcript 없음/경로 오류)을 session-save.log에 기록
@@ -290,7 +290,7 @@ SessionStart (startup only)
 **Security hardening (2026-03-18)**:
 - `session-context.sh`: Added `set -euo pipefail`; SessionStart JSON output now serialized via `python3 json.dumps()` instead of raw shell interpolation — prevents JSON injection from CONTEXT variable.
 - `stop-doc-enforce.sh`: Python `-c` code no longer interpolates `$RESULT_TMP` into the code string; path passed as `sys.argv[1]` instead — eliminates injection surface.
-- `tasks.json`: `skill-eval` script path changed from relative (`scripts/skill-eval.sh`) to absolute (`~/.jarvis/scripts/skill-eval.sh`) — prevents ENOENT on cron execution.
+- `tasks.json`: `skill-eval` script path changed from relative (`scripts/skill-eval.sh`) to absolute (`~/jarvis/runtime/scripts/skill-eval.sh`) — prevents ENOENT on cron execution.
 
 **Discord bot + infra 개인정보 범용화 (2026-04-10)**:
 - `claude-runner.js`: `BORAM_*` → `FAMILY_*` 전환 완료. tutor/preply 기능 완전 삭제 (`isTutorQuery`, `buildTutorSection` import 및 호출 제거, Dynamic sections 블록에서 tutor 조건부 주입 제거). 특정 벤더 Calendar 주석 → 범용 "calendar" 참조로 변경. owner preferences 주석에서 개인 서비스명 제거. Linter 복원 대응으로 2차 삭제 수행.
@@ -316,7 +316,7 @@ SessionStart (startup only)
 - 12개 파일 PII sanitize + `git-filter-repo`로 전체 히스토리 142건 PII 정리.
 
 **Inbox 자동 수집·스코어링·응답 스킬 `/inbox-apply` (2026-04-11)**:
-- `inbox-crawl.mjs` (신규): Puppeteer + API 하이브리드 독립 크롤러. 대상 기관 API + Puppeteer DOM 파싱으로 항목 수집. Chrome 확장 없이 CLI에서 실행. 결과 `~/.jarvis/state/inbox/latest.json` 저장. 대상 리스트는 `private/config/inbox-targets.json`에서 로드 (gitignored).
+- `inbox-crawl.mjs` (신규): Puppeteer + API 하이브리드 독립 크롤러. 대상 기관 API + Puppeteer DOM 파싱으로 항목 수집. Chrome 확장 없이 CLI에서 실행. 결과 `~/jarvis/runtime/state/inbox/latest.json` 저장. 대상 리스트는 `private/config/inbox-targets.json`에서 로드 (gitignored).
 - `inbox-match.mjs` (신규): 프로필 키워드 vs 항목 요구사항 스코어링 엔진. `--detail` 모드에서 각 항목 상세 페이지 접속하여 정밀 스코어링. 점수순 정렬 + Discord 전송.
 - `inbox-apply.mjs` (신규): Puppeteer headless 분석 + `open -a "Google Chrome"` GUI 표시 하이브리드. 폼 방식 자동 감지 → 폼 필드 자동 채움 + PDF 첨부 + 스크린샷 Discord 전송.
 - `claude-runner.js`: 변경 없음 (inbox-apply는 독립 스크립트로 Claude 세션 외부에서 실행).
@@ -343,7 +343,7 @@ SessionStart (startup only)
 
 **channel feed context 주입 (2026-04-15) — 완전 구현**:
 - **근본 문제**: 봇/크론/알람이 채널로 보낸 메시지는 Claude 세션 히스토리에 저장되지 않음 → 사용자가 "방금 크론이 보낸 거 뭐야?" 물어보면 Jarvis가 매번 재질문. 오너 강제 요청으로 모든 채널 전체 대상 구조적 수정.
-- **`channel-feed.js`** (신규): `~/.jarvis/state/channel-feed/{channelName}.jsonl` 에 발신 메시지 기록. `appendFeed(name, from, text)` + `loadFeed(name, limit)` + `buildChannelFeedSection(name)`. 롤링 30건 유지. `from` 구분: `jarvis`(응답), `cron`(discord_send), `alert`(AlertBatcher), `system`(봇 생명주기).
+- **`channel-feed.js`** (신규): `~/jarvis/runtime/state/channel-feed/{channelName}.jsonl` 에 발신 메시지 기록. `appendFeed(name, from, text)` + `loadFeed(name, limit)` + `buildChannelFeedSection(name)`. 롤링 30건 유지. `from` 구분: `jarvis`(응답), `cron`(discord_send), `alert`(AlertBatcher), `system`(봇 생명주기).
 - **`handlers.js`**: Claude 응답 완료 후 `appendFeed(chName, 'jarvis', lastAssistantText)` 호출 — 봇 응답 전체 기록.
 - **`alert-batcher.js`**: `flush()` 후 `appendFeed(channelName, 'alert', description)` 호출 — 배치 알람 기록.
 - **`extras-gateway.mjs`**: `discordSend()` 성공 후 `_appendChannelFeed(channel, message)` 호출 — 크론/스크립트 발신 메시지 기록 (nexus는 별도 프로세스이므로 독립 구현).
@@ -357,7 +357,7 @@ SessionStart (startup only)
 - macOS Claude 앱은 서버-only 대화이므로 Phase 1 자동 경로 불가 → Phase 2 `/remember`가 **유일한 기억 입금 창구**.
 
 **표면 통합 메모리 — Phase 1: Claude Code CLI → 위키 실시간 주입 (2026-04-15)**:
-- 간극 진단: `stop-session-save.sh`가 Claude Code 세션을 `~/.jarvis/context/claude-code-sessions/{project}/{ts}.md`로 덤프해왔으나, 이후 `context-extractor.mjs`(nightly)는 도메인 summary만 생성하고 `wikiAddFact`를 호출하지 않음 → Claude Code 대화는 RAG에는 증분 인덱싱되지만 위키로는 수렴하지 못하는 비대칭.
+- 간극 진단: `stop-session-save.sh`가 Claude Code 세션을 `~/jarvis/runtime/context/claude-code-sessions/{project}/{ts}.md`로 덤프해왔으나, 이후 `context-extractor.mjs`(nightly)는 도메인 summary만 생성하고 `wikiAddFact`를 호출하지 않음 → Claude Code 대화는 RAG에는 증분 인덱싱되지만 위키로는 수렴하지 못하는 비대칭.
 - `wiki-engine.mjs::addFactToWiki()`: 3번째 인자를 `opts = { domainOverride, source }` 객체로 확장. 백워드 호환 유지(문자열 전달 시 domainOverride로 해석). `_facts.md` 기록 라인 포맷을 `- [YYYY-MM-DD] [source:X] 팩트` 로 변경 — 어느 표면에서 주입되었는지 사후 감사 가능. 중복 체크는 source 무관 (첫 주입이 SSoT).
 - `claude-runner.js::wikiAddFact()` 래퍼: `opts` 파라미터 추가, `{ source: 'discord', ...opts }` 명시. Discord 봇 경로의 모든 주입은 `source:discord` 태그됨.
 - `infra/scripts/wiki-ingest-claude-session.mjs` (신규): 세션 .md 1개를 입력받아 Haiku(4.5)로 facts 추출 후 `addFactToWiki(source: 'claude-code-cli')` 루프. `--latest [project]` 플래그로 mtime 기준 최신 세션 자동 선택. LLM 실패 시에도 exit 0 (파이프라인 비차단). autoExtractMemory 추출 프롬프트를 Claude Code 세션 맥락에 맞춰 각색.
@@ -382,7 +382,7 @@ SessionStart (startup only)
 - `user-memory.js`: Family 채널 노이즈 필터 정규식 정밀화. 기존 광범위한 userid 패턴 → `FAMILY_JUNK_RE = /^\[userid:|compacted at|사용자 의도|완료된 작업|미완 작업|핵심 참조/i` 으로 교체. 정당한 학생/일정 정보 오탐 방지.
 
 **post-tool-docdebt.sh worktree 경로 정규화 (2026-04-15)**:
-- 버그: `~/jarvis/.claude/worktrees/<name>/infra/docs/X.md` 경로 편집 시 debt 해소 로직이 경로를 인식하지 못함. 기존 prefix 검사는 `~/jarvis/infra/`, `~/jarvis/`, `~/.jarvis/` 세 가지만 대응. worktree 경로는 `~/jarvis/` prefix에는 매치되지만 `rel`이 `.claude/worktrees/...`로 시작해 `startswith("docs/")` 검사에서 탈락 → debt 해소 실패.
+- 버그: `~/jarvis/.claude/worktrees/<name>/infra/docs/X.md` 경로 편집 시 debt 해소 로직이 경로를 인식하지 못함. 기존 prefix 검사는 `~/jarvis/infra/`, `~/jarvis/`, `~/jarvis/runtime/` 세 가지만 대응. worktree 경로는 `~/jarvis/` prefix에는 매치되지만 `rel`이 `.claude/worktrees/...`로 시작해 `startswith("docs/")` 검사에서 탈락 → debt 해소 실패.
 - 대칭 비대칭 문제: 반면 코드 편집 시 `match_glob`은 `mg in file_path` (substring 매치)를 쓰기 때문에 worktree 경로에서도 debt 추가는 정상 동작. 결과적으로 worktree에서 작업 시 **debt는 쌓이는데 해소가 안 되는** stuck 상태 발생.
 - 수정: 훅 파이썬 블록 상단에 정규식 기반 worktree 경로 정규화 추가. `^~/jarvis/.claude/worktrees/<name>/(rest)$` 매치 시 `file_path`를 `~/jarvis/(rest)`로 재작성 후 기존 로직에 투입. 같은 정규화가 `frel` 계산 경로에도 자동 적용되어 debt 엔트리의 `triggered_by` 값도 main 체크아웃과 동일한 상대 경로로 통일됨.
 - 효과: Stop 훅의 doc-debt 차단이 worktree 기반 PR 작업 흐름을 더 이상 방해하지 않음.
@@ -396,7 +396,7 @@ SessionStart (startup only)
 - macOS 앱 제약 솔직화: 서버-only 대화 이력 때문에 Phase 1 자동 경로 불가 → Phase 2의 MCP 도구로 "명시적 주입"만 가능. `/remember`가 사실상 유일한 기억 입금 창구. 이 점은 CLAUDE.md와 스킬 본문에 모두 명시.
 
 **표면 통합 메모리 — Phase 1: Claude Code CLI → 위키 실시간 주입 (2026-04-15)**:
-- 간극 진단: `stop-session-save.sh`가 Claude Code 세션을 `~/.jarvis/context/claude-code-sessions/{project}/{ts}.md`로 덤프해왔으나, 이후 `context-extractor.mjs`(nightly)는 도메인 summary만 생성하고 `wikiAddFact`를 호출하지 않음 → Claude Code 대화는 RAG에는 증분 인덱싱되지만 위키로는 수렴하지 못하는 비대칭 (읽기만 공유, 쓰기는 분리).
+- 간극 진단: `stop-session-save.sh`가 Claude Code 세션을 `~/jarvis/runtime/context/claude-code-sessions/{project}/{ts}.md`로 덤프해왔으나, 이후 `context-extractor.mjs`(nightly)는 도메인 summary만 생성하고 `wikiAddFact`를 호출하지 않음 → Claude Code 대화는 RAG에는 증분 인덱싱되지만 위키로는 수렴하지 못하는 비대칭 (읽기만 공유, 쓰기는 분리).
 - `wiki-engine.mjs::addFactToWiki()`: 3번째 인자를 `opts = { domainOverride, source }` 객체로 확장. 백워드 호환 유지(문자열 전달 시 domainOverride로 해석). `_facts.md` 기록 라인 포맷을 `- [YYYY-MM-DD] [source:X] 팩트`로 변경 — 어느 표면에서 주입되었는지 사후 감사 가능. 중복 체크는 source 무관 (첫 주입이 SSoT).
 - `claude-runner.js::wikiAddFact()` 래퍼: `opts` 파라미터 추가, `{ source: 'discord', ...opts }` 명시. Discord 봇 경로의 모든 주입은 `source:discord` 태그됨.
 - `infra/scripts/wiki-ingest-claude-session.mjs` (신규): 세션 .md 1개를 입력받아 Haiku(4.5)로 facts 추출 후 `addFactToWiki(source: 'claude-code-cli')` 루프. `--latest [project]` 플래그로 mtime 기준 최신 세션 자동 선택. LLM 실패 시에도 exit 0 (파이프라인 비차단). autoExtractMemory 추출 프롬프트를 Claude Code 세션 맥락에 맞춰 각색 (구체적 결정·선호·제약 위주, diff/코드라인/행동 요약 금지). KST 타임스탬프 로깅.
@@ -644,8 +644,8 @@ Automated code quality scanner (`scripts/jarvis-auditor.sh`, daily 04:45):
 Bi-directional sync between bot data and an Obsidian Vault (`scripts/vault-sync.sh`, every 6 hours):
 
 ```
-~/.jarvis/rag/teams/reports/*.md  ──►  ~/Jarvis-Vault/03-teams/{team}/
-~/.jarvis/docs/*.md               ──►  ~/Jarvis-Vault/06-knowledge/
+~/jarvis/runtime/rag/teams/reports/*.md  ──►  ~/Jarvis-Vault/03-teams/{team}/
+~/jarvis/runtime/docs/*.md               ──►  ~/Jarvis-Vault/06-knowledge/
 ```
 
 Each team folder retains the 7 most recent reports. Enables browsing AI-generated reports in Obsidian with full graph and backlink support.

@@ -380,7 +380,7 @@ See [ROADMAP.md](ROADMAP.md) for details and contribution opportunities.
 ## File Structure
 
 ```
-~/.jarvis/
+~/jarvis/runtime/
 ├── discord/          # Discord client, handlers, formatters, slash commands
 ├── bin/              # Entry points: ask-claude.sh, bot-cron.sh, jarvis-init.sh
 ├── lib/              # Core: rag-engine.mjs, mcp-nexus.mjs, llm-gateway.sh

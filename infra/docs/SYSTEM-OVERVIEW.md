@@ -400,7 +400,7 @@ Circuit Breaker로 반복 타임아웃 자동 차단
 
 **디렉토리 구조:**
 ```
-~/.jarvis/
+~/jarvis/runtime/
 ├── bin/           크론 진입점 (ask-claude.sh, jarvis-cron.sh, route-result.sh)
 ├── config/        tasks.json, monitoring.json, goals.json
 ├── discord/       봇 코드, personas.json, node_modules/

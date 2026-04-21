@@ -161,8 +161,8 @@ docker compose down
 ### 설치
 
 ```bash
-git clone https://github.com/your-username/jarvis ~/.jarvis
-cd ~/.jarvis
+git clone https://github.com/your-username/jarvis ~/jarvis/runtime
+cd ~/jarvis/runtime
 cp .env.example .env
 nano .env  # 토큰 입력
 ```
@@ -170,8 +170,8 @@ nano .env  # 토큰 입력
 ### 원클릭 설치 (setup.sh 권장)
 
 ```bash
-git clone https://github.com/your-username/jarvis ~/.jarvis
-cd ~/.jarvis
+git clone https://github.com/your-username/jarvis ~/jarvis/runtime
+cd ~/jarvis/runtime
 chmod +x setup.sh
 ./setup.sh
 ```
@@ -219,8 +219,8 @@ pm2 startup && pm2 save
 ### 설치
 
 ```bash
-git clone https://github.com/your-username/jarvis ~/.jarvis
-cd ~/.jarvis
+git clone https://github.com/your-username/jarvis ~/jarvis/runtime
+cd ~/jarvis/runtime
 cp .env.example .env
 nano .env  # 토큰 입력
 ```
@@ -228,8 +228,8 @@ nano .env  # 토큰 입력
 ### 원클릭 설치 (setup.sh 권장)
 
 ```bash
-git clone https://github.com/your-username/jarvis ~/.jarvis
-cd ~/.jarvis
+git clone https://github.com/your-username/jarvis ~/jarvis/runtime
+cd ~/jarvis/runtime
 chmod +x setup.sh
 ./setup.sh
 ```
@@ -238,7 +238,7 @@ chmod +x setup.sh
 
 ```bash
 npm install -g pm2
-cd ~/.jarvis
+cd ~/jarvis/runtime
 pm2 start ecosystem.config.cjs
 pm2 startup systemd  # 자동시작 등록 명령어 출력됨
 pm2 save

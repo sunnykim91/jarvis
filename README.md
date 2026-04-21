@@ -1,6 +1,6 @@
 # Jarvis
 
-> **⚠️ Migration Notice (2026-04-17)**: Runtime data relocated from `~/.jarvis/` → `~/jarvis/runtime/`.
+> **⚠️ Migration Notice (2026-04-17)**: Runtime data relocated from `~/jarvis/runtime/` → `~/jarvis/runtime/`.
 > Existing installations: `~/.jarvis` remains as a backward-compatible symlink through **2026-10-17** (D+180).
 > Fresh installs: use `~/jarvis/runtime/` directly. See [docs/A2-MIGRATION.md](infra/docs/A2-MIGRATION.md) (upcoming).
 
@@ -160,7 +160,7 @@ The onboarding wizard guides you through Steps 0–14 (idempotent — re-runnabl
 | 0 | Checks Node.js 18+, git, Ollama (optional — RAG only) |
 | 1 | Detects installation state → **[V]** verify only / **[U]** update specific values / **[R]** full reinstall |
 | 2–5 | Collects tokens interactively — skips steps whose values are already configured |
-| 6 | Creates/updates `~/.jarvis/.env` + 8 data directories — preserves existing values with `--merge` |
+| 6 | Creates/updates `~/jarvis/runtime/.env` + 8 data directories — preserves existing values with `--merge` |
 | 7 | Runs `npm install` + copies `*.example.json` config templates (skips existing files) |
 | 8 | **RAG setup** (optional) — if Ollama detected, runs `python3 scripts/setup_rag.py` (~400MB model) |
 | 9 | Asks: **Auto-update** or **Manual-update**? (skips if policy already set) |
@@ -298,7 +298,7 @@ Inspired by [Andrej Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6b
 | **Processing** | Index → retrieve | Claude Haiku digests → integrates into existing pages |
 | **Growth** | Accumulates independently | Compounds — new info updates existing knowledge |
 
-**7 wiki categories** (`~/.jarvis/wiki/pages/{userId}/`):
+**7 wiki categories** (`~/jarvis/runtime/wiki/pages/{userId}/`):
 
 | Page | Captures |
 |------|---------|
@@ -435,11 +435,11 @@ Output: `context-bus.md` (shared context) + `decisions/{date}.jsonl` + `board-mi
 **Two directories, one reason** — code and your data live apart so updates can never touch your stuff.
 
 - **`~/jarvis/`** — the recipe book (this git repo; replaced on every update)
-- **`~/.jarvis/`** — your fridge (tokens, chat history, RAG DB, personal configs; never touched by `git pull`)
+- **`~/jarvis/runtime/`** — your fridge (tokens, chat history, RAG DB, personal configs; never touched by `git pull`)
 
-Same pattern as `~/.ssh` or `~/.aws` — the tool is shared, your data is yours. A phone OS update doesn't delete your photos; a `git pull` here doesn't delete your memory. `~/.jarvis/private/` (repo-ignored) is the correct home for personal helper scripts that a public repo shouldn't carry.
+Same pattern as `~/.ssh` or `~/.aws` — the tool is shared, your data is yours. A phone OS update doesn't delete your photos; a `git pull` here doesn't delete your memory. `~/jarvis/runtime/private/` (repo-ignored) is the correct home for personal helper scripts that a public repo shouldn't carry.
 
-Since the A2 migration (2026-04-17), `~/.jarvis/` is a symlink to `~/jarvis/runtime/` so the two paths resolve to the same files. Code-containing subdirectories (`bin/`, `lib/`, `scripts/`, `infra/`) are further symlinked into the repo so crons reference stable paths; everything else (`config/`, `data/`, `logs/`, `state/`, `ledger/`, `private/`, `wiki/`, `rag/`) is a real directory that holds only your data.
+Since the A2 migration (2026-04-17), `~/jarvis/runtime/` is a symlink to `~/jarvis/runtime/` so the two paths resolve to the same files. Code-containing subdirectories (`bin/`, `lib/`, `scripts/`, `infra/`) are further symlinked into the repo so crons reference stable paths; everything else (`config/`, `data/`, `logs/`, `state/`, `ledger/`, `private/`, `wiki/`, `rag/`) is a real directory that holds only your data.
 
 ## Project Structure
 
@@ -463,9 +463,9 @@ jarvis/
 └── docs/img/            # Screenshots
 ```
 
-**Runtime wiki storage** (`~/.jarvis/wiki/`):
+**Runtime wiki storage** (`~/jarvis/runtime/wiki/`):
 ```
-~/.jarvis/wiki/
+~/jarvis/runtime/wiki/
   schema.json            # Wiki structure rules
   pages/{userId}/
     profile.md / work.md / trading.md / projects.md

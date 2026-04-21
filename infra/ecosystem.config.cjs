@@ -8,7 +8,7 @@
  *   pm2 startup && pm2 save
  */
 
-const JARVIS_HOME = process.env.JARVIS_HOME || require('os').homedir() + '/.jarvis'
+const JARVIS_HOME = process.env.JARVIS_HOME || require('os').homedir() + '/jarvis/runtime'
 
 module.exports = {
   apps: [

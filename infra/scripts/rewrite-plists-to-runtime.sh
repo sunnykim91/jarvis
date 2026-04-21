@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# rewrite-plists-to-runtime.sh — LaunchAgent plist의 ~/.jarvis 경로를
+# rewrite-plists-to-runtime.sh — LaunchAgent plist의 ~/jarvis/runtime 경로를
 # ~/jarvis/runtime 경로로 일괄 치환. A2 migration Phase D 선결.
 #
 # Usage:
@@ -8,7 +8,7 @@ set -euo pipefail
 #   bash rewrite-plists-to-runtime.sh --apply     # 실제 치환 + 재등록
 #
 # 동작:
-#   1. ~/Library/LaunchAgents/*.plist 중 ~/.jarvis 참조하는 것 탐지
+#   1. ~/Library/LaunchAgents/*.plist 중 ~/jarvis/runtime 참조하는 것 탐지
 #   2. 백업 → ~/backup/plists-phase-d/<TS>/
 #   3. 치환: /Users/ramsbaby/jarvis/runtime/ → /Users/ramsbaby/jarvis/runtime/
 #   4. 각 LaunchAgent bootout + bootstrap (재등록)

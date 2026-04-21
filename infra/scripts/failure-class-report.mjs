@@ -19,7 +19,7 @@ import readline from 'node:readline';
 const HOME = os.homedir();
 const RETRY_LOG_CANDIDATES = [
   `${HOME}/jarvis/runtime/logs/retry.jsonl`,
-  `${HOME}/.jarvis/logs/retry.jsonl`,
+  `${HOME}/jarvis/runtime/logs/retry.jsonl`,
 ];
 
 function parseArgs() {

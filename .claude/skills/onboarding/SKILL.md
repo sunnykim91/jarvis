@@ -41,7 +41,7 @@ node .claude/skills/onboarding/scripts/check-setup.mjs
 출력 예시:
 ```json
 {
-  "envPath": "~/.jarvis/.env",
+  "envPath": "~/jarvis/runtime/.env",
   "missing": ["DISCORD_TOKEN", "ANTHROPIC_API_KEY", "GUILD_ID"],
   "present": ["BOT_HOME"],
   "updatePolicy": null
@@ -148,18 +148,18 @@ node .claude/skills/onboarding/scripts/write-env.mjs \
 - 변경하지 않을 값은 인자에서 생략하면 됨 (기존 값 보존)
 
 이 스크립트는:
-- ~/.jarvis/.env 생성/업데이트 (primary, 권한 600)
+- ~/jarvis/runtime/.env 생성/업데이트 (primary, 권한 600)
 - ~/.local/share/jarvis/.env 생성/업데이트 (sync)
 - BOT_HOME=~/.local/share/jarvis 자동 포함
 - 디렉토리 자동 생성:
-  - ~/.jarvis/
-  - ~/.jarvis/config/
+  - ~/jarvis/runtime/
+  - ~/jarvis/runtime/config/
   - ~/.local/share/jarvis/ (BOT_HOME)
   - 데이터 서브디렉토리 8개: logs/ state/ context/ inbox/ results/ rag/ data/ config/
 
 출력 예시:
 ```json
-{ "status": "ok", "paths": ["~/.jarvis/.env", "~/.local/share/jarvis/.env"] }
+{ "status": "ok", "paths": ["~/jarvis/runtime/.env", "~/.local/share/jarvis/.env"] }
 { "status": "merged", "updatedKeys": ["DISCORD_TOKEN"], "paths": [...] }
 ```
 
@@ -263,7 +263,7 @@ node .claude/skills/onboarding/scripts/save-update-policy.mjs --mode <auto|manua
 - `--force` 없으면 이미 설정된 정책은 보존됨 (status: "exists" 반환)
 - `--force` 사용 시 기존 정책 덮어씀
 
-저장 위치: ~/.jarvis/config/update-policy.json
+저장 위치: ~/jarvis/runtime/config/update-policy.json
 
 ---
 
@@ -272,7 +272,7 @@ node .claude/skills/onboarding/scripts/save-update-policy.mjs --mode <auto|manua
 환경 파일을 로드하여 🚀jarvis-update 채널을 생성합니다.
 
 ```bash
-export $(grep -v '^#' ~/.jarvis/.env | grep -v '^$' | xargs)
+export $(grep -v '^#' ~/jarvis/runtime/.env | grep -v '^$' | xargs)
 RESULT=$(node .claude/skills/onboarding/scripts/create-update-channel.mjs)
 CHANNEL_ID=$(echo "$RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['channelId'])")
 ```

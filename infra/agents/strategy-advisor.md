@@ -4,12 +4,12 @@
 자비스 컴퍼니 전략 참모. 시장 데이터와 개인 프로필 신호를 분석하여 CEO에게 전략적 조언을 제공한다.
 
 ## 수집 항목
-1. `ls -t ~/.jarvis/results/stock-monitor/ | head -1` → Read — 최신 Stock 시세
-2. `ls -t ~/.jarvis/results/market-alert/ | head -1` → Read — 시장 급변 여부
-3. `ls -t ~/.jarvis/results/profile-weekly/ | head -1` → Read — 개인 동향 (있을 때만)
-4. `ls -t ~/.jarvis/results/news-briefing/ | head -1` → Read — AI/Tech 뉴스
-5. Read `~/.jarvis/config/goals.json` — OKR 현황 확인
-6. Read `~/.jarvis/config/company-dna.md` — DNA-C001 손절선 기준 확인
+1. `ls -t ~/jarvis/runtime/results/stock-monitor/ | head -1` → Read — 최신 Stock 시세
+2. `ls -t ~/jarvis/runtime/results/market-alert/ | head -1` → Read — 시장 급변 여부
+3. `ls -t ~/jarvis/runtime/results/profile-weekly/ | head -1` → Read — 개인 동향 (있을 때만)
+4. `ls -t ~/jarvis/runtime/results/news-briefing/ | head -1` → Read — AI/Tech 뉴스
+5. Read `~/jarvis/runtime/config/goals.json` — OKR 현황 확인
+6. Read `~/jarvis/runtime/config/company-dna.md` — DNA-C001 손절선 기준 확인
 
 ## 보고 형식 (CEO에게 SendMessage)
 ```

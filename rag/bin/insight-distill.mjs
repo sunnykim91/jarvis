@@ -5,7 +5,7 @@
  * Reads behavioural metrics + conversation summaries,
  * then uses ask-claude.sh (claude -p) to extract high-level user insights.
  *
- * Output: ~/.jarvis/context/insight-report.md
+ * Output: ~/jarvis/runtime/context/insight-report.md
  *
  * Run: node rag/bin/insight-distill.mjs
  * Cron: daily 04:00 (after entity-graph at 03:45)

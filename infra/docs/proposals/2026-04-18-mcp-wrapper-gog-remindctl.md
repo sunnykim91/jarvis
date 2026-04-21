@@ -150,7 +150,7 @@ stdout 파싱 → JSON 변환 → MCP response
 
 - **버전 드리프트 감지**: 래퍼 기동 시 `gog --version` 확인 → 기대 버전 대역 이탈 시
   stderr 경고 + MCP 도구 호출 실패로 fail-fast.
-- **실패 원장**: MCP 호출 실패를 `~/.jarvis/logs/mcp-gog-remindctl.jsonl` 에 append
+- **실패 원장**: MCP 호출 실패를 `~/jarvis/runtime/logs/mcp-gog-remindctl.jsonl` 에 append
   → 주간 감사(`weekly-report`)에 편입 검토.
 - **표면 동치성 테스트**: `infra/tests/mcp-surface-parity.sh` 에 3표면 호출 결과
   diff 체크 크론 추가 (주 1회).

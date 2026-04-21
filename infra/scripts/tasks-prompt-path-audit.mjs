@@ -16,12 +16,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 
 const HOME = os.homedir();
-const TASKS_FILE = `${HOME}/.jarvis/config/tasks.json`;
+const TASKS_FILE = `${HOME}/jarvis/runtime/config/tasks.json`;
 const LEDGER_DIR = `${HOME}/jarvis/runtime/ledger`;
 const LEDGER_FILE = `${LEDGER_DIR}/tasks-prompt-path-audit.jsonl`;
 const MONITORING_CANDIDATES = [
   `${HOME}/jarvis/runtime/config/monitoring.json`,
-  `${HOME}/.jarvis/config/monitoring.json`,
+  `${HOME}/jarvis/runtime/config/monitoring.json`,
 ];
 const BOT_HOME_CANDIDATES = [`${HOME}/jarvis/runtime`, `${HOME}/.jarvis`];
 

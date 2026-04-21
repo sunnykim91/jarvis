@@ -43,7 +43,7 @@ bash infra/scripts/launchd-sync.sh
 launchctl kickstart -k gui/$(id -u)/ai.jarvis.report-healthcheck
 
 # 로그 확인
-tail -20 ~/.jarvis/logs/report-healthcheck.log
+tail -20 ~/jarvis/runtime/logs/report-healthcheck.log
 ```
 
 ## 제거 (해당 잡만 끄기)

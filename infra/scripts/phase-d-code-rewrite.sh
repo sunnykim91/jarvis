@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# phase-d-code-rewrite.sh — 코드 내 ~/.jarvis 하드코딩을 ~/jarvis/runtime으로
+# phase-d-code-rewrite.sh — 코드 내 ~/jarvis/runtime 하드코딩을 ~/jarvis/runtime으로
 # 일괄 치환. A2 Phase D 본작업.
 #
 # Usage:
