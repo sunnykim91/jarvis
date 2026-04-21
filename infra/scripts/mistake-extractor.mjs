@@ -140,6 +140,40 @@ function withLock(lockPath, fn) {
   }
 }
 
+// ── 예산 강제 차단 (Verify 4회차 P0-2 — max_budget_usd 메타필드만은 무의미 해소) ──
+// 오늘 누적 cost_usd >= BUDGET_DAILY_USD 면 callClaude 호출 자체 차단.
+// 환경변수 MISTAKE_EXTRACTOR_BUDGET 로 override.
+const BUDGET_DAILY_USD = Number(process.env.MISTAKE_EXTRACTOR_BUDGET || 0.10);
+function budgetCheck() {
+  try {
+    const ledgerFile = join(homedir(), 'jarvis/runtime/state/token-ledger.jsonl');
+    if (!existsSync(ledgerFile)) return { allow: true, today: 0 };
+    const today = kstNow().slice(0, 10); // YYYY-MM-DD (KST)
+    const raw = readFileSync(ledgerFile, 'utf-8');
+    let totalCost = 0;
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const o = JSON.parse(line);
+        if (o.task === 'mistake-extractor' && o.ts && o.ts.startsWith(today)) {
+          totalCost += Number(o.cost_usd || 0);
+        }
+      } catch { /* malformed line ignore */ }
+    }
+    if (totalCost >= BUDGET_DAILY_USD) {
+      return {
+        allow: false,
+        reason: `오늘 누적 $${totalCost.toFixed(5)} ≥ 예산 $${BUDGET_DAILY_USD.toFixed(2)} — 내일 00:00 KST 자동 리셋`,
+        today: totalCost,
+      };
+    }
+    return { allow: true, today: totalCost };
+  } catch (e) {
+    log(`budget check 실패 (허용): ${e.message}`);
+    return { allow: true, today: 0 };
+  }
+}
+
 // ── 서킷브레이커 (Haiku 연속 실패 3회 → 24h open) ────────────────────────────
 // 비용 폭주 방지: LLM 호출 반복 실패 상황에서 extractor 자체를 24h 비활성화.
 // state: closed(정상) | open(차단) | half-open(쿨다운 후 1회 시도 허용 — 자동)
@@ -406,6 +440,19 @@ async function main() {
       log(`차단: ${gate.reason}`);
       console.log(`🛑 오답노트 자동 추출 — ${gate.reason}`);
       return;
+    }
+  }
+
+  // 예산 차단 (DRY_RUN은 제외, 일일 누적 Haiku 비용 $0.10 기본)
+  if (!DRY_RUN) {
+    const budget = budgetCheck();
+    if (!budget.allow) {
+      log(`예산 차단: ${budget.reason}`);
+      console.log(`💰 오답노트 자동 추출 — 예산 차단: ${budget.reason}`);
+      return;
+    }
+    if (budget.today > BUDGET_DAILY_USD * 0.8) {
+      log(`예산 경고: 오늘 누적 $${budget.today.toFixed(5)} (${(budget.today/BUDGET_DAILY_USD*100).toFixed(0)}%)`);
     }
   }
 
