@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-04-21T01:26:11.327Z",
+  "generatedAt": "2026-04-21T03:18:05.449Z",
   "source": "~/jarvis/runtime/config/tasks.json",
-  "totalTasks": 100,
+  "totalTasks": 102,
   "teamDistribution": {
     "standup": 1,
     "president": 13,
@@ -14,11 +14,11 @@
     "brand-lead": 4,
     "audit-lead": 17,
     "secretary": 10,
-    "uncategorized": 13
+    "uncategorized": 15
   },
   "typeDistribution": {
     "prompt": 37,
-    "script": 63
+    "script": 65
   },
   "groups": [
     {
@@ -210,7 +210,7 @@
           "model": null,
           "priority": "normal",
           "maxBudget": null,
-          "disabled": true,
+          "disabled": false,
           "description": "08:00~21:00 매시 정각 1회. 하루 최대 14슬롯 (실제 게시는 board-topic-proposer.sh 내 일일 상한 5개로 제한)",
           "logs": {
             "stdout": {
@@ -2418,7 +2418,7 @@
           "model": null,
           "priority": "low",
           "maxBudget": null,
-          "disabled": true,
+          "disabled": false,
           "description": "매일 03:23 KST 활성 태스크 프롬프트/script 필드의 스크립트 경로 존재성 감사. 유령 발견 시 jarvis-system 채널 알림 + ledger 기록 + exit 2. 매주 → 매일로 상향(24h 내 감지 보장).",
           "logs": {
             "stdout": {
@@ -2900,6 +2900,38 @@
       },
       "tasks": [
         {
+          "id": "backup-retention-daily",
+          "name": "백업 보존 정책 실행",
+          "schedule": "0 4 * * *",
+          "scheduleHuman": "매일 04:00",
+          "type": "script",
+          "handler": "backup-retention.sh",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": null,
+          "model": null,
+          "priority": "daily",
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": "매일 04:00 KST. 오래된 백업 파일 보존 정책 적용. plist-only였으나 Nexus SSoT로 이관 (2026-04-21).",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/backup-retention-daily.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/backup-retention-daily-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-backup-retention-daily-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
           "id": "boram-daily-schedule",
           "name": "보람 일정 브리핑 (비활성 — personal-schedule-daily로 대체됨)",
           "schedule": "30 7 * * *",
@@ -3215,6 +3247,38 @@
             },
             "claudeStderr": {
               "pattern": "claude-stderr-mistake-extractor-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
+          "id": "runtime-rag-backup",
+          "name": "RAG 런타임 백업",
+          "schedule": "0 3 * * *",
+          "scheduleHuman": "매일 03:00",
+          "type": "script",
+          "handler": "runtime-rag-backup.sh",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": null,
+          "model": null,
+          "priority": "daily",
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": "매일 03:00 KST. RAG 런타임 데이터 백업. plist-only였으나 Nexus SSoT로 이관 (2026-04-21).",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/runtime-rag-backup.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/runtime-rag-backup-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-runtime-rag-backup-*.log",
               "exists": false
             }
           }
