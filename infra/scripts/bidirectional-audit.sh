@@ -31,6 +31,7 @@ fi
 
 # --- 1. tasks.json 엔트리 목록 (enabled + schedule ≠ manual) ---
 # output: "task_id\tschedule\thas_discord"
+# 용도: MISSING / MISMATCH 판정용 (실제 launchd 로 돌아야 하는 태스크)
 TASKS_TSV=$(jq -r '
   (.tasks // [])[]
   | select(.enabled != false)
@@ -39,13 +40,19 @@ TASKS_TSV=$(jq -r '
   | @tsv
 ' "$EFF_TASKS" 2>/dev/null || echo "")
 
+# --- 1-b. ORPHAN 판정용 전체 task id 세트 (2026-04-22 B2 복구) ---
+# 배경: 기존에는 TASK_IDS 가 enabled+non-manual 만 포함 → disabled/manual 태스크의 plist 가
+#       모두 orphan 으로 과대계측되는 버그. orphan 판정은 "tasks.json 에 어떤 형태로든 존재하는가"
+#       가 올바른 기준 (schedule 없어도 manual 실행 의도로 존재할 수 있음).
+ALL_TASK_IDS=$(jq -r '(.tasks // [])[] | .id' "$EFF_TASKS" 2>/dev/null | sort -u)
+
 # --- 2. 실제 plist 목록 (com.jarvis.*.plist / ai.jarvis.*.plist) ---
 ACTIVE_PLISTS=$(ls -1 "$LA_DIR" 2>/dev/null \
   | grep -E '^(ai|com)\.jarvis\..*\.plist$' \
   | sed -E 's/^(ai|com)\.jarvis\.//; s/\.plist$//' \
   | sort -u)
 
-# --- 3. 태스크 id 세트 ---
+# --- 3. 태스크 id 세트 (MISSING/MISMATCH 판정용 — 좁은 필터) ---
 TASK_IDS=$(echo "$TASKS_TSV" | awk -F'\t' 'NF>0 {print $1}' | sort -u)
 
 # ====================================================================
@@ -60,7 +67,8 @@ while IFS= read -r plist_id; do
       continue
       ;;
   esac
-  if ! echo "$TASK_IDS" | grep -qx "$plist_id"; then
+  # B2 복구 (2026-04-22): ALL_TASK_IDS (전체 task id) 로 판정 — disabled/manual 태스크 오탐 방지
+  if ! echo "$ALL_TASK_IDS" | grep -qx "$plist_id"; then
     ORPHAN_LIST+=("$plist_id")
     printf '{"ts":"%s","action":"orphan_plist","task":"%s","reason":"plist_exists_but_no_tasks_json_entry"}\n' \
       "$TS_ISO" "$plist_id" >> "$LEDGER"

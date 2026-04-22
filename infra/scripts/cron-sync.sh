@@ -42,13 +42,19 @@ log "=== cron-sync 시작 ==="
 CREATED=0
 SKIPPED=0
 
-python3 << PYEOF
+# 🔒 B1 복구 (2026-04-22) — heredoc 인용 경화
+# 기존 `<< PYEOF` (unquoted) → bash 가 heredoc 안의 백틱/$ 를 해석.
+# 증상: Python 주석의 `0 * * * *` 백틱을 command substitution 으로 해석해 매 실행 "line 45: 0: command not found" 노이즈.
+# 대응: `<< 'PYEOF'` (quoted) 로 치환 차단 + TASKS_FILE/DRY_RUN 은 env export 로 전달.
+export TASKS_FILE
+export DRY_RUN
+python3 << 'PYEOF'
 import json, os, subprocess, sys
 
 BOT_HOME = os.environ.get('BOT_HOME', os.path.expanduser('~/jarvis/runtime'))
 LAUNCH_AGENTS = os.path.expanduser('~/Library/LaunchAgents')
-TASKS_FILE = '$TASKS_FILE'
-DRY_RUN = '$DRY_RUN' == '--dry-run'
+TASKS_FILE = os.environ['TASKS_FILE']
+DRY_RUN = os.environ.get('DRY_RUN', '') == '--dry-run'
 
 with open(TASKS_FILE) as f:
     raw = json.load(f)

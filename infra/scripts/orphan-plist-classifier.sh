@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# orphan-plist-classifier.sh — bidirectional-audit 가 찾아낸 orphan plist 를
-# long-running daemon / 주기 실행 / 기타 3 종으로 자동 분류.
+# orphan-plist-classifier.sh — bidirectional-audit 의 **보조 분류** 도구
 #
-# Why: "plist 有 + tasks.json 無" 상태는 삭제 후보일 수도, 보존 대상(daemon)일 수도 있다.
-#      KeepAlive=true / RunAtLoad=true / Schedule 키 존재 여부로 안전하게 분류.
+# 역할 분담 (2026-04-22 B2 SSoT 정립):
+#   - bidirectional-audit.sh = ORPHAN 감지 SSoT (ai.jarvis.* + com.jarvis.* 전수)
+#   - orphan-plist-classifier.sh (이 파일) = 감지된 orphan 들을
+#     long-running daemon / 주기 실행 / 기타 3 종으로 자동 분류 (감지 아님)
+#
+# 초기 구현 (2026-04-22) 오류 정정: com.jarvis.* 만 보아 ai.jarvis.* 27건 누락.
+# 이제 두 prefix 모두 스캔.
 #
 # Usage: orphan-plist-classifier.sh
 # 출력: Discord 리포트 텍스트 (stdout)
@@ -24,15 +28,17 @@ mkdir -p "$LEDGER_DIR"
 # --- tasks.json id set ---
 TASK_IDS=$(jq -r '(.tasks // [])[] | .id' "$EFF_TASKS" 2>/dev/null | sort -u)
 
-# --- plist 수집 (com.jarvis.*) ---
+# --- plist 수집 (com.jarvis.* + ai.jarvis.*) — 2026-04-22 B2-b 확장 ---
 DAEMON=()
 SCHEDULED=()
 OTHER=()
 
-for plist in "$LA_DIR"/com.jarvis.*.plist; do
+shopt -s nullglob
+for plist in "$LA_DIR"/com.jarvis.*.plist "$LA_DIR"/ai.jarvis.*.plist; do
   [[ -f "$plist" ]] || continue
   base=$(basename "$plist" .plist)
   task_id="${base#com.jarvis.}"
+  task_id="${task_id#ai.jarvis.}"
 
   # tasks.json 에 있으면 orphan 이 아님 — skip
   if echo "$TASK_IDS" | grep -qx "$task_id"; then
