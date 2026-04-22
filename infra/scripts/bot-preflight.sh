@@ -21,6 +21,8 @@ MAX_HEAL_ATTEMPTS=3
 FAST_CRASH_FILE="$BOT_HOME/state/fast-crash-count"
 FAST_CRASH_THRESHOLD=3    # N회 빠른 크래시 시 heal 트리거
 FAST_CRASH_WINDOW_SEC=10  # 기동 후 N초 이내 종료 = 빠른 크래시 (node 시작 오버헤드 + 여유)
+DAILY_HEAL_FILE="$BOT_HOME/state/daily-heal-count"
+DAILY_HEAL_MAX=10          # 24시간 내 heal 최대 횟수 — 무한 tmux 루프 방지
 
 mkdir -p "$BACKUP_DIR"
 
@@ -34,6 +36,26 @@ fail_and_heal() {
     local reason="$1"
     log "FAIL: $reason"
 
+    # ── 일일 heal 예산 확인 (RISK-4: 무한 tmux 루프 방지) ────────────────────────
+    local daily_count=0
+    if [[ -f "$DAILY_HEAL_FILE" ]]; then
+        local daily_age
+        daily_age=$(( $(date +%s) - $(stat -f %m "$DAILY_HEAL_FILE" 2>/dev/null || echo 0) ))
+        if (( daily_age < 86400 )); then
+            daily_count=$(cat "$DAILY_HEAL_FILE" 2>/dev/null || echo 0)
+        else
+            rm -f "$DAILY_HEAL_FILE"
+        fi
+    fi
+    if (( daily_count >= DAILY_HEAL_MAX )); then
+        log "CRITICAL: 24시간 heal 예산 소진 (${DAILY_HEAL_MAX}회) — 수동 개입 필요"
+        send_ntfy "Jarvis 봇 heal 예산 소진" "24시간 내 ${DAILY_HEAL_MAX}회 한도 초과. 수동 개입 필요: $reason" "urgent"
+        log "600초 대기 (스팸 방지)..."
+        sleep 600
+        exit 1
+    fi
+    echo $(( daily_count + 1 )) > "$DAILY_HEAL_FILE"
+
     # ── 복구 시도 횟수 확인 ────────────────────────────────────────────────────
     local attempts=0
     if [[ -f "$HEAL_ATTEMPTS_FILE" ]]; then
@@ -42,7 +64,7 @@ fail_and_heal() {
 
     # 6시간 이상 안정적이었으면 카운터 자동 리셋 (일시적 장애가 영구 차단하지 않게)
     if [[ -f "$HEAL_ATTEMPTS_FILE" ]]; then
-        last_attempt_age=$(( $(date +%s) - $(stat -c '%Y' "$HEAL_ATTEMPTS_FILE" 2>/dev/null || stat -f %m "$HEAL_ATTEMPTS_FILE" 2>/dev/null || echo 0) ))
+        last_attempt_age=$(( $(date +%s) - $(stat -f %m "$HEAL_ATTEMPTS_FILE" 2>/dev/null || echo 0) ))
         if (( last_attempt_age > 21600 )); then
             log "6시간 이상 경과 — 복구 카운터 자동 리셋 (이전 시도: ${attempts}회)"
             rm -f "$HEAL_ATTEMPTS_FILE"
@@ -59,7 +81,7 @@ fail_and_heal() {
     fi
 
     echo $(( attempts + 1 )) > "$HEAL_ATTEMPTS_FILE"
-    log "복구 시도 $(( attempts + 1 ))/${MAX_HEAL_ATTEMPTS}"
+    log "복구 시도 $(( attempts + 1 ))/${MAX_HEAL_ATTEMPTS} [일일: $(( daily_count + 1 ))/${DAILY_HEAL_MAX}]"
 
     # ── heal-in-progress 락 확인 (watchdog과의 중복 heal 방지) ────────────────────
     local heal_lock="$BOT_HOME/state/heal-in-progress"
@@ -178,15 +200,17 @@ if [[ -x "$BOT_HOME/scripts/cron-sync.sh" ]]; then
     log "cron-sync 완료"
 fi
 
-# exec 대신 직접 실행: 종료 후 빠른 크래시 여부 판단 가능
-# (launchd는 bash PID를 추적 → node 종료 후 bash도 종료 → launchd가 재시작)
+# node를 백그라운드로 실행 + SIGTERM trap: launchctl stop/daily-restart 수신 시
+# bash가 즉사하여 node가 고아 프로세스로 잔존하는 문제(RISK-2) 방지
 _start_ts=$(date +%s)
 cd "$BOT_HOME/discord" || fail_and_heal "디렉토리 이동 실패: $BOT_HOME/discord"
-# NODE_PATH 명시 설정: Node.js가 node_modules를 자동으로 찾도록 보장 (절대 경로)
-# set -u 모드 안전 처리: 단일 라인으로 원자적 처리
 export NODE_PATH="/Users/ramsbaby/jarvis/runtime/discord/node_modules${NODE_PATH:+:$NODE_PATH}"
-"$NODE_BIN" discord-bot.js
+"$NODE_BIN" discord-bot.js &
+_BOT_PID=$!
+trap 'log "SIGTERM 수신 — 봇 정상 종료 중 (PID $_BOT_PID)..."; kill "$_BOT_PID" 2>/dev/null; wait "$_BOT_PID" 2>/dev/null; exit 0' SIGTERM SIGINT
+wait "$_BOT_PID"
 _exit_code=$?
+trap - SIGTERM SIGINT
 _runtime=$(( $(date +%s) - _start_ts ))
 
 if (( _exit_code != 0 && _runtime < FAST_CRASH_WINDOW_SEC )); then

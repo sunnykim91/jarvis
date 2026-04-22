@@ -98,6 +98,8 @@ runtime/discord/.env
 infra/config/monitoring.json
 infra/config/models.json
 config/*.bak*
+infra/discord/*.bak-*
+infra/discord/**/*.bak-*
 *.backup
 
 # JSONL 원장 (토큰, 에러, 커밋먼트 등)
