@@ -510,6 +510,33 @@ if [[ "$should_emit" != "1" ]]; then
   exit 0
 fi
 
+# ── 4.9. plist-bypass-autofix 통계 수집 (2026-04-22) ─────────────────────────
+# plist-bypass-autofix.sh가 남긴 ledger를 파싱해 오늘의 감지→수정→검증 통계 수집.
+# BYPASS 재발 방지 가드의 가시화 — 감지만 하고 끝나지 않도록 리포트에 건수 표기.
+BYPASS_AUTOFIX_LEDGER="$BOT_HOME/state/plist-bypass-autofix.jsonl"
+BYPASS_AUTOFIX_SUMMARY=""
+BYPASS_AUTOFIX_TARGETS=()
+if [[ -f "$BYPASS_AUTOFIX_LEDGER" ]]; then
+  today_prefix=$(TZ=Asia/Seoul date +%Y-%m-%dT)  # KST 로컬 날짜 (ledger ts와 일치)
+  # 오늘자 action 전수 집계 (tail -1 summary는 후속 0/0/0 실행에 가려지므로 폐기)
+  today_entries=$(grep "\"ts\":\"${today_prefix}" "$BYPASS_AUTOFIX_LEDGER" 2>/dev/null || true)
+  if [[ -n "$today_entries" ]]; then
+    _fix=$(echo "$today_entries" | grep -c '"action":"fixed"' || echo 0)
+    _fail=$(echo "$today_entries" | grep -c '"action":"failed"' || echo 0)
+    # skip은 summary에만 남음(line-level action 아님) — 오늘의 최대 skip값 채택
+    _skip=$(echo "$today_entries" | grep '"action":"summary"' \
+            | grep -oE '"skip":[0-9]+' | grep -oE '[0-9]+' | sort -n | tail -1)
+    _skip=${_skip:-0}
+    BYPASS_AUTOFIX_SUMMARY="fix=${_fix} skip=${_skip} fail=${_fail}"
+    while IFS= read -r tgt; do
+      [[ -n "$tgt" ]] && BYPASS_AUTOFIX_TARGETS+=("$tgt")
+    done < <(echo "$today_entries" | grep '"action":"fixed"' | grep -oE '"task":"[^"]+"' | cut -d'"' -f4 || true)
+    if [[ "${_fail}" -gt 0 ]]; then
+      add_issue "plist-bypass-autofix 복구 실패 ${_fail}건 (검증: ${BYPASS_AUTOFIX_LEDGER})"
+    fi
+  fi
+fi
+
 # ── 5. 리포트 출력 (stdout → bot-cron.sh가 Discord로 라우팅) ─────────────────
 
 echo "🔍 **크론 마스터 종합 리포트** — ${NOW} KST"
@@ -580,4 +607,13 @@ if [[ ${#REPAIRS[@]} -gt 0 ]]; then
   echo ""
   echo "  📝 원장: ${REPAIR_LEDGER}"
   echo "  📈 감지 원장: ${DAILY_LEDGER}"
+fi
+
+if [[ -n "$BYPASS_AUTOFIX_SUMMARY" ]]; then
+  echo ""
+  echo "🛠 **plist BYPASS 자동 복구** — 오늘 ${BYPASS_AUTOFIX_SUMMARY}"
+  if [[ ${#BYPASS_AUTOFIX_TARGETS[@]} -gt 0 ]]; then
+    echo "  · 복구 대상: ${BYPASS_AUTOFIX_TARGETS[*]}"
+  fi
+  echo "  · 원장: ${BYPASS_AUTOFIX_LEDGER}"
 fi
