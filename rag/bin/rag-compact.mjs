@@ -19,7 +19,7 @@ ensureDirs();
 // rag-index.mjs가 실행 중(init() 포함)이면 compact 즉시 종료.
 // write lock 체크보다 앞서 수행 — lock 획득 전 init() 단계도 차단함.
 try {
-  execSync('pgrep -f "rag-index.mjs"', { stdio: 'ignore' });
+  execSync('pgrep -f "/rag-index.mjs"', { stdio: 'ignore' });
   console.log(`[${new Date().toISOString()}] [rag-compact] rag-index 실행 중 — compact 건너뜀`);
   process.exit(0);
 } catch {
