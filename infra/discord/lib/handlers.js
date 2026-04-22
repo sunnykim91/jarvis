@@ -574,7 +574,13 @@ export async function handleMessage(message, state) {
   if (rememberMatch) {
     const fact = rememberMatch[1].trim();
     if (fact) {
-      userMemory.addFact(effectiveAuthor.id, fact, 'discord-remember-cmd');
+      userMemory.addFact(
+        effectiveAuthor.id,
+        fact,
+        'discord-remember-cmd',
+        'medium',
+        effectiveAuthor.displayName || effectiveAuthor.username || '',
+      );
       await message.reply(t('msg.remembered'));
       log('info', 'User memory saved via text command', { userId: effectiveAuthor.id, fact: fact.slice(0, 100) });
     }

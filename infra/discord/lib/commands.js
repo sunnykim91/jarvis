@@ -247,7 +247,13 @@ export async function handleInteraction(interaction, deps) {
     const memPath = join(BOT_HOME, 'rag', 'memory.md');
     const timestamp = new Date().toISOString().slice(0, 10);
     appendFileSync(memPath, `\n- [${timestamp}] ${text}`);
-    userMemory.addFact(interaction.user.id, text, 'discord-slash-remember');
+    userMemory.addFact(
+      interaction.user.id,
+      text,
+      'discord-slash-remember',
+      'medium',
+      interaction.member?.displayName || interaction.user.displayName || interaction.user.username || '',
+    );
     await interaction.reply({ content: t('cmd.remember.done', { content: text }) });
     log('info', 'Memory saved via /remember', { userId: interaction.user.id, text: text.slice(0, 100) });
 
