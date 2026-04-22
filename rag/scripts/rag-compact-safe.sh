@@ -64,7 +64,7 @@ date +%s > "$COOLDOWN_FILE"
 
 echo "[$(ts)] [rag-compact] compact 시작" >> "$LOG"
 set +e
-node "${RAG_ROOT}/bin/rag-compact.mjs" >> "$LOG" 2>&1
+node "${RAG_ROOT}/rag/bin/rag-compact.mjs" >> "$LOG" 2>&1
 compact_exit=$?
 set -e
 
