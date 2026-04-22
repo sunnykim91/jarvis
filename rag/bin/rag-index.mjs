@@ -858,9 +858,9 @@ async function main() {
   if (pruned > 0) ragLog(`[rag-index] Pruned ${pruned} stale state entries`);
 
   // Index changed files
-  // MAX_RUNTIME_MS: fresh rebuild는 무제한 (130K 청크가 90분 안에 못 끝남 → 무한 루프 원인)
-  // incremental 모드만 90분 제한 (변경분만 처리하므로 충분)
-  const MAX_RUNTIME_MS = isFreshRebuild ? Infinity : 90 * 60 * 1000;
+  // MAX_RUNTIME_MS: fresh rebuild도 4시간 상한 적용 (Infinity는 stuck 시 무한 CPU 독식 위험)
+  // incremental 모드는 90분 제한 (변경분만 처리하므로 충분)
+  const MAX_RUNTIME_MS = isFreshRebuild ? 4 * 60 * 60 * 1000 : 90 * 60 * 1000;
   let _processed = 0;
   let _runtimeExceeded = false;
 

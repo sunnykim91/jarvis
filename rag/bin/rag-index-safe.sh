@@ -27,11 +27,15 @@ COMPACT_SH="${RAG_ROOT}/scripts/rag-compact-safe.sh"
 
 # stdout은 rag-index.mjs 내부의 appendFileSync가 직접 파일에 씀.
 # 여기서 stdout도 리다이렉트하면 같은 줄이 2번 기록됨 — stderr만 연결.
-node \
+# OS 레벨 하드캡: fresh rebuild 4h + 여유 30m = 4.5h (내부 타임아웃 미발동 시 2차 방어)
+timeout 16200 node \
   --max-old-space-size=512 \
   "${RAG_ROOT}/bin/rag-index.mjs" "$@" \
   2>> "$LOG"
 node_exit=$?
+if [ $node_exit -eq 124 ]; then
+  echo "[$(date '+%Y-%m-%dT%H:%M:%S')] [rag-index-safe] FATAL: OS timeout(16200s) 발동 — 내부 타임아웃 미작동. 강제 종료." >> "$LOG"
+fi
 
 # 리빌드 완료 후 자동 컴팩션 트리거
 if [ -f "$COMPACT_FLAG" ] && [ -f "$COMPACT_SH" ]; then
