@@ -906,9 +906,21 @@ export class StreamingMessage {
     // 트런케이션 대신 분할 전송 — 내용 유실 없음.
     // 1990 → 1800 하향: 헤딩/단락 경계를 더 쉽게 찾도록 여유 확보 (2026-04-20).
     const DISCORD_LIMIT = 1990; // 2026-04-20 원복: 1800 → 1990 (split 빈도 최소화)
-    if (content.length > DISCORD_LIMIT) {
-      log('warn', '_sendOrEdit: content exceeded Discord limit after formatting — splitting', { originalLen: content.length });
-      const parts = _splitIntoChunks(content, DISCORD_LIMIT);
+    // [2026-04-23 핫픽스 Fix-50035] "분리 송출" 버그 수정:
+    //  Discord API error 50035 "content must be 2000 or fewer" 는 원본 content가 아닌
+    //  _composeDisplay()가 cursor(▌) + 🧠 thinking prefix + statusBar(-#) + tool status를
+    //  덧붙인 **displayContent** 기준으로 검사함. 기존 코드는 `content.length > 1990`만
+    //  체크해서 displayContent가 2000+ 된 경우 edit 실패 → _resumeAsNewMessage 경로 →
+    //  placeholder 잔존 + 본문 new message = "2개로 분리된 듯한" 중첩 발생.
+    //  수정: content + displayContent 둘 중 하나라도 한계 초과면 split 경로 진입.
+    //  content는 1700 이하로 split해서 확장분(cursor·prefix·statusBar ~300자) 여유 확보.
+    const CONTENT_SAFE_LIMIT = 1700; // 확장분 여유 300자
+    const _previewDisplay = this._composeDisplay(content, isFinal);
+    if (content.length > CONTENT_SAFE_LIMIT || _previewDisplay.length > DISCORD_LIMIT) {
+      log('warn', '_sendOrEdit: limit exceeded (content or display) — splitting', {
+        contentLen: content.length, displayLen: _previewDisplay.length
+      });
+      const parts = _splitIntoChunks(content, CONTENT_SAFE_LIMIT);
       // 첫 번째 파트: 현재 _sendOrEdit 흐름으로 처리 (재귀)
       // 나머지 파트: 순차 channel.send
       for (let pi = 0; pi < parts.length; pi++) {
@@ -1012,6 +1024,23 @@ export class StreamingMessage {
     if (!delta || !delta.trim()) {
       log('debug', '_resumeAsNewMessage: no delta, skipping');
       return;
+    }
+    // [2026-04-23 핫픽스 Fix-50035 보험] placeholder 메시지 정리:
+    //  sentLength=0 + _isPlaceholder 상태에서 edit 실패 시 이 경로 진입.
+    //  placeholder "✅..." 또는 "ℹ️..." 메시지가 채널에 남아있고 본문을 new send하면
+    //  사용자 눈에 "placeholder 메시지 + 본문 메시지" 2개로 **분리 송출**처럼 보임.
+    //  대응: placeholder 메시지 삭제 시도 (실패해도 silent, new send는 계속 진행).
+    if (this._isPlaceholder && this.currentMessage && this.sentLength === 0) {
+      try {
+        await this.currentMessage.delete();
+        log('debug', '_resumeAsNewMessage: stale placeholder deleted (duplicate prevention)');
+      } catch (delErr) {
+        log('debug', '_resumeAsNewMessage: placeholder delete failed (ignoring)', {
+          err: delErr.message, code: delErr.code
+        });
+      }
+      this.currentMessage = null;
+      this._isPlaceholder = false;
     }
     try {
       const resumeMarker = '\n\n-# ↪️ 이어서…';
