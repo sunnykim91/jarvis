@@ -921,26 +921,52 @@ export class StreamingMessage {
         contentLen: content.length, displayLen: _previewDisplay.length
       });
       const parts = _splitIntoChunks(content, CONTENT_SAFE_LIMIT);
-      // 첫 번째 파트: 현재 _sendOrEdit 흐름으로 처리 (재귀)
-      // 나머지 파트: 순차 channel.send
+      // [2026-04-23 Fix-50035 P2] split 루프 보강:
+      //  결함 1) L929 `partDisplay = (...) ? part : part` 삼항 양쪽 동일값 → 중간 chunk에도 cursor 미부착
+      //         수정: 중간/미완료 chunk는 끝에 '▌' 한 글자 부착 (1자 증가 → 1701자, DISCORD_LIMIT 안전)
+      //  결함 2) placeholder edit / channel.send 실패 시 silent 실패 → placeholder 잔존 + 남은 chunks 유실
+      //         수정: 각 chunk 처리를 try/catch로 감싸서 실패 시 placeholder 정리 + channel.send 폴백
+      //         폴백도 실패하면 남은 chunks 포기하고 return (debounce 흐름에서 재시도 유도)
       for (let pi = 0; pi < parts.length; pi++) {
         const part = parts[pi];
         const isLast = pi === parts.length - 1;
-        const partDisplay = (!isLast || (!this.finalized && !isFinal)) ? part : part;
+        // 중간 chunk 또는 미완료(스트리밍 중) 마지막 chunk에는 커서(▌) 부착 — plain chunk와 시각 구분
+        const partDisplay = (!isLast || (!this.finalized && !isFinal)) ? `${part}▌` : part;
         const payload = { content: partDisplay, embeds: [], components: [], flags: MessageFlags.SuppressEmbeds };
-        if (pi === 0 && this._isPlaceholder && this.currentMessage) {
-          // _unregisterPlaceholder는 finalize() 완료 시점에만 호출 (orphan cleanup이 버튼 제거할 수 있도록)
-          this._isPlaceholder = false;
-          await this.currentMessage.edit({ content: partDisplay, embeds: [], components: [], flags: MessageFlags.SuppressEmbeds });
-          this.sentLength = part.length;
-        } else if (pi === 0 && !this.currentMessage && this.replyTo) {
-          try { this.currentMessage = await this.replyTo.reply(payload); }
-          catch { this.currentMessage = await this.channel.send(payload); }
-          this.replyTo = null;
-          this.sentLength = part.length;
-        } else {
-          this.currentMessage = await this.channel.send(payload);
-          this.sentLength = part.length;
+        try {
+          if (pi === 0 && this._isPlaceholder && this.currentMessage) {
+            // placeholder edit 먼저 시도 — 성공 시에만 flag 해제
+            await this.currentMessage.edit(payload);
+            this._isPlaceholder = false;
+            this.sentLength = part.length;
+          } else if (pi === 0 && !this.currentMessage && this.replyTo) {
+            try { this.currentMessage = await this.replyTo.reply(payload); }
+            catch { this.currentMessage = await this.channel.send(payload); }
+            this.replyTo = null;
+            this.sentLength = part.length;
+          } else {
+            this.currentMessage = await this.channel.send(payload);
+            this.sentLength = part.length;
+          }
+        } catch (partErr) {
+          log('error', '_sendOrEdit split: part send/edit failed — fallback to channel.send', {
+            pi, partLen: part.length, err: partErr.message
+          });
+          // placeholder 잔존 시 삭제 후 새 메시지로 재시작
+          if (this._isPlaceholder && this.currentMessage) {
+            try { await this.currentMessage.delete(); } catch (_delErr) {}
+            this.currentMessage = null;
+            this._isPlaceholder = false;
+          }
+          try {
+            this.currentMessage = await this.channel.send(payload);
+            this.sentLength = part.length;
+          } catch (sendErr) {
+            log('error', '_sendOrEdit split: fallback channel.send also failed — aborting remaining parts', {
+              pi, remaining: parts.length - pi - 1, err: sendErr.message
+            });
+            return; // 남은 chunks 포기, 다음 debounce tick에서 재시도 유도
+          }
         }
         if (!isLast) await new Promise(r => setTimeout(r, 300)); // rate limit 방지
       }
