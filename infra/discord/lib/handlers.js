@@ -510,14 +510,25 @@ export async function handleMessage(message, state) {
           via: trigger.via,
         });
         const { runSkill } = await import('./skill-runner.js');
-        // 초기 placeholder 메시지 (SDK query는 30~60초 소요 — typing indicator만으론 부족)
+        const skillStartTs = Date.now();
+        // 초기 placeholder (SDK query 30~60초 소요 — typing만으론 부족).
         const placeholder = await message.reply(
-          `🔍 **\`/${trigger.skill}\`** 분석 중입니다... (잠시 기다려 주십시오)`
+          `🔍 **\`/${trigger.skill}\`** 분석 중입니다... (0s)`
         ).catch(() => null);
-        // typing indicator 주기적 갱신 (10초 TTL × 6 = 최대 60초)
+        // typing indicator + placeholder 경과 시간 동시 갱신.
+        // Discord rate limit: same message edit은 3초 간격이 안전.
         let typingInterval = setInterval(() => {
           message.channel.sendTyping().catch(() => {});
         }, 8000);
+        let elapsedInterval = null;
+        if (placeholder) {
+          elapsedInterval = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - skillStartTs) / 1000);
+            placeholder.edit({
+              content: `🔍 **\`/${trigger.skill}\`** 분석 중입니다... (${elapsed}s)`,
+            }).catch(() => {});
+          }, 10000);
+        }
         message.channel.sendTyping().catch(() => {});
         let result;
         try {
@@ -526,7 +537,17 @@ export async function handleMessage(message, state) {
           });
         } finally {
           clearInterval(typingInterval);
+          if (elapsedInterval) clearInterval(elapsedInterval);
         }
+        const skillDurMs = Date.now() - skillStartTs;
+        log('info', 'Skill trigger completed', {
+          skill: trigger.skill,
+          durationMs: skillDurMs,
+          userId: effectiveAuthor.id,
+          textLength: result.text?.length ?? 0,
+          error: result.error ?? null,
+          via: result.via ?? 'api',
+        });
         const header = `🎯 **스킬 \`/${trigger.skill}\`** (${trigger.via}, conf=${trigger.confidence})\n\n`;
         const bodyBudget = 2000 - header.length - 20;
         const reply = result.text.length > bodyBudget
