@@ -31,13 +31,15 @@ const TARGETS_PATH = join(homedir(), 'jarvis', 'private', 'config', 'inbox-targe
 let SITES = [];
 let GREETINGHR_SITES = [];
 let NINEHIRE_SITES = [];
+let WANTED_CFG = null;
 try {
   if (existsSync(TARGETS_PATH)) {
     const cfg = JSON.parse(readFileSync(TARGETS_PATH, 'utf-8'));
     SITES = Array.isArray(cfg.sites) ? cfg.sites : [];
     GREETINGHR_SITES = Array.isArray(cfg.greetinghr_sites) ? cfg.greetinghr_sites : [];
     NINEHIRE_SITES = Array.isArray(cfg.ninehire_sites) ? cfg.ninehire_sites : [];
-    console.log(`📂 타겟 로드: ${SITES.length} sites + ${GREETINGHR_SITES.length} greetinghr + ${NINEHIRE_SITES.length} ninehire`);
+    WANTED_CFG = (cfg.wanted && cfg.wanted.enabled) ? cfg.wanted : null;
+    console.log(`📂 타겟 로드: ${SITES.length} sites + ${GREETINGHR_SITES.length} greetinghr + ${NINEHIRE_SITES.length} ninehire${WANTED_CFG ? ' + wanted' : ''}`);
   } else {
     console.warn(`⚠️ ${TARGETS_PATH} 없음 — 크롤링 대상 0건. 샘플: private/config/inbox-crawl-targets.example.json 참고`);
   }
@@ -98,6 +100,59 @@ async function crawlGreetingHR(site) {
     console.error(`  [API] ${site.company} 실패: ${e.message}`);
     return [];
   }
+}
+
+// ── API 크롤링 (Wanted 어그리게이터) ──────────────────────────────────────
+// 원티드 chaos navigation API — 공개·인증불필요. 2026-04-24 실측:
+//   - job_group_id=518 (개발) 서버측 필터 작동 (parent=518 전부 반환)
+//   - years/positions/subCategories 파라미터 **서버측 무시** → 클라이언트 필터
+//   - limit=20 고정, offset pagination 정상(중복 0 확인)
+async function crawlWanted(cfg) {
+  const {
+    job_group_id = 518,
+    max_offset = 500,
+    min_annual_to = 3,      // 연차 상한이 3년 미만인 공고 제외 (주니어 전용)
+    max_annual_from = 12,   // 연차 하한이 12년 초과인 공고 제외 (시니어 전용)
+  } = cfg;
+  const results = [];
+  const seenIds = new Set();
+  let offset = 0;
+  const PAGE = 20;
+  try {
+    while (offset <= max_offset) {
+      const url = `https://www.wanted.co.kr/api/chaos/navigation/v1/results?job_sort=job.latest_order&locations=all&job_group_id=${job_group_id}&country=kr&limit=${PAGE}&offset=${offset}`;
+      const r = await fetch(url, {
+        headers: {
+          'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          'wanted-client-id': 'web',
+          'accept': 'application/json',
+        },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      const data = d?.data || [];
+      if (data.length === 0) break;
+      for (const j of data) {
+        if (seenIds.has(j.id)) continue;
+        seenIds.add(j.id);
+        const annualFrom = j.annual_from ?? 0;
+        const annualTo = j.annual_to ?? 99;
+        // 연차 필터: 오너 경력(9년차) 기준, to<3 or from>12 제외
+        if (annualTo < min_annual_to) continue;
+        if (annualFrom > max_annual_from) continue;
+        results.push({
+          title: j.position || '',
+          url: `https://www.wanted.co.kr/wd/${j.id}`,
+          company: `[원티드] ${j.company?.name || '?'}`,
+          annualFrom, annualTo,
+        });
+      }
+      offset += PAGE;
+    }
+  } catch (e) {
+    console.error(`  [API] Wanted 실패: ${e.message}`);
+  }
+  return results;
 }
 
 // ── API 크롤링 (NineHire) ─────────────────────────────────────────────────
@@ -207,6 +262,20 @@ async function main() {
 
   // Phase 1: API 직접 호출 (빠름, 브라우저 불필요)
   console.log('\n📡 Phase 1: API 직접 호출...');
+
+  // Wanted 어그리게이터 (수백 회사 커버)
+  if (WANTED_CFG) {
+    const jobs = await crawlWanted(WANTED_CFG);
+    const backend = jobs.filter(j => isBackendJob(j.title));
+    const newJobs = backend.filter(j => { const id = makeId(j.url); if (seen.has(id)) return false; seen.add(id); return true; });
+    allJobs.push(...backend.map(j => ({ ...j, isNew: newJobs.some(n => n.url === j.url) })));
+    // 회사별 그룹핑 통계
+    const byCompany = new Map();
+    for (const j of backend) byCompany.set(j.company, (byCompany.get(j.company) || 0) + 1);
+    siteResults.push({ company: `원티드 (${byCompany.size}개사)`, total: jobs.length, backend: backend.length, new: newJobs.length });
+    console.log(`  ✅ 원티드: 전체 ${jobs.length}건 (백엔드 ${backend.length}건 / ${byCompany.size}개사, 신규 ${newJobs.length})`);
+  }
+
   for (const site of GREETINGHR_SITES) {
     const jobs = await crawlGreetingHR(site);
     const backend = jobs.filter(j => isBackendJob(j.title));
