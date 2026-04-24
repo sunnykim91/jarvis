@@ -67,8 +67,24 @@
 ## 비용·관측
 
 - **일일 캡**: `~/jarvis/runtime/state/discord-skill-quota.json` 영속 (봇 재시작 시 유지)
-- **audit log**: `handlers.js` 내 `log('info', 'Skill trigger detected', ...)` 구조화 JSON
-- **응답 시간**: SDK query 30~60초 (maxTurns=10 기준). Discord 초기 placeholder + 8초 주기 typing indicator로 UX 커버
+- **audit log 2층**: 
+  - `'Skill trigger detected'` — 트리거 시작 (userId, skill, confidence, via)
+  - `'Skill trigger completed'` — 완료 metric (durationMs, textLength, error, via)
+- **응답 시간**: SDK query 30~60초 (maxTurns=10 기준). UX 처리:
+  - 초기 placeholder 메시지 (`🔍 /skill 분석 중... (0s)`)
+  - 10초마다 placeholder 경과 시간 갱신
+  - 8초마다 typing indicator 갱신
+  - 완료 시 edit → 최종 응답
+
+## Discord 버튼 결재 UX — 의도적 미구현
+
+원 autoplan 플랜에 Phase 3.1/3.5 결재 버튼 UX가 있었으나 재평가 결과 **미구현 결정**:
+
+1. **실 실행 없음**: Discord SDK query는 `allowedTools: []` 강제 → Bash/Write 불가. 주인님이 ✅ 승인해도 Discord 봇이 수행할 `/deploy` 실 동작 없음
+2. **UX 가치 제한적**: 버튼은 "비가역 작업 전 승인 레이어" 목적. 실 실행이 없으면 단순 UX 복잡도만 증가
+3. **기존 가드로 충분**: `senderIsOwner` 게이트 + L4 스킬은 "CLI 세션에서 실행해 주십시오" 안내 응답
+
+**재구현 고려 시점**: Discord 봇이 실제 bash 실행 권한을 갖게 되는 미래 (별도 설계 + 감사 필수). 현 Surface Boundary 철학에서는 Discord = 읽기/트리거 전용, 쓰기/실행 = CLI 전용.
 
 ## 재발 방지 (오답노트 매치)
 
