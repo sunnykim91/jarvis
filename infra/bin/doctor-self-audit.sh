@@ -62,8 +62,11 @@ audit_la_namespace() {
       ai.jarvis|com.jarvis|ai.openclaw)
         ok "$ns (doctor.md에 매핑됨)"
         ;;
-      com.apple|com.microsoft|com.google|com.docker|com.fitbit|com.amazon|com.anthropic)
+      com.apple|com.microsoft|com.google|com.docker|com.fitbit|com.amazon|com.anthropic|homebrew.mxcl|com.user)
         info "$ns (시스템/외부 — skip)"
+        ;;
+      com.ramsbaby|jarvis.alarm) # privacy:allow github-username
+        info "$ns (주인님 사용자 네임스페이스 — skip)"
         ;;
       *)
         warn "$ns (doctor.md G regex에 미등록 — regex 업데이트 권고)"
@@ -79,16 +82,13 @@ audit_tasks_coverage() {
     warn "tasks.json 없음"
     return
   fi
-  local total domains sections
+  local total priorities sections
+  # tasks.json 스키마에는 'domain' 필드가 없음 → priority 고유값으로 커버리지 heuristic.
   total=$(jq '.tasks | length' "$TASKS_JSON" 2>/dev/null || echo 0)
-  domains=$(jq -r '[.tasks[]?.domain // empty] | unique | length' "$TASKS_JSON" 2>/dev/null || echo 0)
+  priorities=$(jq -r '[.tasks[]?.priority // empty] | unique | length' "$TASKS_JSON" 2>/dev/null || echo 0)
   sections=$(grep -cE "^### [A-Z]\. " "$DOCTOR_MD" 2>/dev/null || echo 0)
-  info "tasks.json 총 태스크: $total · 고유 도메인: $domains"
+  info "tasks.json 총 태스크: $total · 고유 priority: $priorities"
   info "doctor.md 섹션 수: $sections"
-  # Heuristic: 섹션 수 < 도메인 수 - 2 = gap 경고
-  if [ "$domains" -gt 0 ] && [ $((sections + 2)) -lt "$domains" ]; then
-    warn "doctor.md 섹션($sections) < tasks 도메인($domains) - 2 → 커버리지 부족 가능"
-  fi
 }
 
 audit_doctor_ledger() {
