@@ -27,7 +27,10 @@ audit_mcp() {
     warn "~/.mcp.json 없음"
     return
   fi
-  jq -r '.mcpServers | keys[]' "$MCP_JSON" 2>/dev/null | while read -r srv; do
+  # ⚠️ subshell 회피: `jq | while`은 파이프라인이라 while이 subshell에서 실행되어
+  # warn() 내 WARNINGS 증가가 부모 쉘에 안 닿음 (2026-04-25 verify Agent 적발).
+  # process substitution `< <(...)`로 while을 현재 쉘에서 실행시켜 카운터 보존.
+  while read -r srv; do
     [ -z "$srv" ] && continue
     case "$srv" in
       workgroup|nexus)
@@ -42,7 +45,7 @@ audit_mcp() {
         info "$srv: npx 기반 (세션 내부만)"
         ;;
     esac
-  done
+  done < <(jq -r '.mcpServers | keys[]' "$MCP_JSON" 2>/dev/null)
 }
 
 audit_la_namespace() {
