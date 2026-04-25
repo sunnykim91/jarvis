@@ -47,17 +47,36 @@ function buildSystemDoctorHTML(d) {
   const BG    = { OK: '#14532d1a', WARN: '#78350f1a', FAIL: '#7f1d1d1a' };
   const ICON  = { OK: '✅', WARN: '⚠️', FAIL: '❌' };
 
-  // 스키마 유연성: doctor 스킬은 summary.findings/healthy 문자열 배열을 보냄 → items로 합성
+  // 스키마 유연성: doctor 스킬은 두 형식 보낼 수 있음
+  //   (a) summary.findings/healthy = 문자열 배열  ["🔴 ...", "✅ ..."]
+  //   (b) summary.findings/healthy = 객체 배열    [{level, icon, title, detail}, ...]
+  // 2026-04-25: (b) 호출 시 f.startsWith TypeError 발생 → 양쪽 정규화 처리
   let items = Array.isArray(d.items) ? d.items : null;
   if (!items && d.summary) {
     items = [];
-    for (const f of (d.summary.findings || [])) {
-      const status = f.startsWith('🔴') ? 'FAIL' : 'WARN';
-      items.push({ item: f.replace(/^[🔴🟡⚠️❌]\s*/, ''), status, note: '' });
-    }
-    for (const h of (d.summary.healthy || [])) {
-      items.push({ item: h.replace(/^[✅]\s*/, ''), status: 'OK', note: '' });
-    }
+    const LEVEL_TO_STATUS = { red: 'FAIL', yellow: 'WARN', orange: 'WARN' };
+    const normalizeFinding = (f) => {
+      if (typeof f === 'string') {
+        const status = f.startsWith('🔴') ? 'FAIL' : 'WARN';
+        return { item: f.replace(/^[🔴🟡⚠️❌]\s*/, ''), status, note: '' };
+      }
+      if (f && typeof f === 'object') {
+        const status = LEVEL_TO_STATUS[(f.level || '').toLowerCase()] || 'WARN';
+        return { item: String(f.title || f.item || ''), status, note: String(f.detail || f.note || '') };
+      }
+      return { item: String(f), status: 'WARN', note: '' };
+    };
+    const normalizeHealthy = (h) => {
+      if (typeof h === 'string') {
+        return { item: h.replace(/^[✅]\s*/, ''), status: 'OK', note: '' };
+      }
+      if (h && typeof h === 'object') {
+        return { item: String(h.title || h.item || ''), status: 'OK', note: String(h.detail || h.note || '') };
+      }
+      return { item: String(h), status: 'OK', note: '' };
+    };
+    for (const f of (d.summary.findings || [])) items.push(normalizeFinding(f));
+    for (const h of (d.summary.healthy || [])) items.push(normalizeHealthy(h));
   }
   items = items || [];
 
