@@ -774,6 +774,29 @@ export class StreamingMessage {
     //            교체 + sentLength=마지막 part 길이 → _flushInner의 sentLength=0 리셋과
     //            충돌 → 이후 잔여 buffer edit 시 누적 본문 유실/이중 송출.
     //  해결: STREAM_MAX_CHARS = CONTENT_SAFE_LIMIT (1700) 동기화 → _sendOrEdit 내부 split 미발동.
+    // [DUP-FIX 2026-04-26 v2] chunk-per-message 진입 직전 — currentMessage에 첫 STREAM_MAX_CHARS
+    //   까지 cumulative edit으로 마무리한 후, 그 다음 chunk부터 새 메시지로 분배.
+    //   결함 메커니즘 (단위 테스트 재현 확인됨):
+    //     cumulative edit으로 sentLength자 송출 후 chunk-per-message 진입 시
+    //     chunk = buffer[0:1700]이 송출분(0..sentLength)을 포함 → 새 메시지에 중복 콘텐츠 → 4번 복제 패턴.
+    //   수정 (v1 롤백 후 v2 적용):
+    //     v1은 buffer.slice(sentLength)로 자르되 첫 chunk를 edit하지 않아 콘텐츠 손실.
+    //     v2는 진입 직전 currentMessage에 첫 STREAM_MAX_CHARS만큼 edit으로 마무리 후 새 메시지로 진행.
+    if (this.buffer.length > STREAM_MAX_CHARS && this.currentMessage && this.sentLength > 0) {
+      const firstChunk = this.buffer.slice(0, STREAM_MAX_CHARS);
+      log('warn', 'DUP-FIX v2 chunk-per-message 진입 — 첫 chunk를 currentMessage에 edit으로 마무리', {
+        sentLength: this.sentLength,
+        firstChunkLen: firstChunk.length,
+        bufferTotal: this.buffer.length,
+      });
+      this.buffer = this.buffer.slice(STREAM_MAX_CHARS);
+      await this._sendOrEdit(firstChunk, true);  // edit으로 currentMessage 마무리 (cumulative)
+      this.currentMessage = null;  // 이후 chunk는 새 메시지로
+      this.sentLength = 0;
+      // fence open 상태 갱신 (firstChunk 끝의 펜스 상태 반영)
+      const fencesInFirst = (firstChunk.match(/```/g) || []).length;
+      if (fencesInFirst % 2 === 1) this.fenceOpen = !this.fenceOpen;
+    }
     let _dupIter = 0;
     while (this.buffer.length > STREAM_MAX_CHARS) {
       const splitAt = this._findSplitPoint(this.buffer, STREAM_MAX_CHARS);
