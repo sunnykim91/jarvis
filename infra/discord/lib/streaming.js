@@ -277,7 +277,10 @@ function adaptiveInterval({ bufferLen = 0, inFence = false, hasTool = false } = 
 // 2026-04-20 재조정: 1700 → 1900 원복
 // 1700은 문단 경계 탐색 여유 확보 명분이었으나 실제로는 1600자대 답변까지
 // 분할 발동 → orphan cleanup race 노출 증가. 원래 1990 직전까지 단일 메시지 유지가 정상.
-const STREAM_MAX_CHARS = 1900; // 포맷팅 확장(URL 래핑, 테이블→리스트) 여유 확보
+// [2026-04-26 RC-1 구조 수정] _sendOrEdit의 CONTENT_SAFE_LIMIT(1700)과 동기화.
+// 호출자(_flushInner)가 단일 chunk를 1700자 이하로 잘라 _sendOrEdit에 전달하면
+// _sendOrEdit 내부 split 경로(buffer 침범)는 발동되지 않음 — 책임 경계 명확화.
+const STREAM_MAX_CHARS = 1700; // _sendOrEdit CONTENT_SAFE_LIMIT과 동기화 (책임 경계 분리)
 const CODE_FILE_MIN_LINES = 30;
 const LANG_EXT = {
   javascript: 'js', typescript: 'ts', python: 'py', py: 'py',
@@ -745,6 +748,15 @@ export class StreamingMessage {
   }
 
   async _flushInner() {
+    // [DUP-DIAG 2026-04-26] 응답 중복 출력 버그 진단 계측
+    // 가설: chunk-per-message 모드 진입 시 cumulative edit으로 송출된 부분이 buffer에 남아 중복 송출
+    log('info', 'DUP-DIAG _flushInner 진입', {
+      bufferLen: this.buffer.length,
+      sentLength: this.sentLength,
+      currentMessageId: this.currentMessage?.id || null,
+      finalized: this.finalized,
+      finalizeComplete: this._finalizeComplete,
+    });
     // 스트리밍 버퍼 전체에 narration filter 적용 (라인 단위 regex가 전체 텍스트에서 매칭)
     // _sendOrEdit의 formatForDiscord는 청크 단위라 분할된 내러티브를 못 잡음
     this.buffer = formatForDiscord(this.buffer, { channelId: this.channelId });
@@ -752,10 +764,29 @@ export class StreamingMessage {
     // P3-1: 마커 조기 전송 (opt-in) — 마커가 완성되자마자 이미지 전송 착수
     await this._tryEarlyMarkerSend();
 
+    // [2026-04-26 RC-1 구조 수정] 책임 경계 — buffer는 호출자(_flushInner)만 슬라이스.
+    //  계약: _sendOrEdit(content, isFinal)는 단일 chunk(<= STREAM_MAX_CHARS)를 받아
+    //        currentMessage 1개에 edit/send만 하고 sentLength = content.length 마킹만 함.
+    //        _sendOrEdit은 buffer/sentLength 외부 상태 슬라이스 금지.
+    //
+    //  과거 결함: _flushInner가 1900자 chunk를 잘라서 _sendOrEdit에 넘기면, _sendOrEdit
+    //            내부 CONTENT_SAFE_LIMIT(1700) 초과로 또 split → currentMessage 다중
+    //            교체 + sentLength=마지막 part 길이 → _flushInner의 sentLength=0 리셋과
+    //            충돌 → 이후 잔여 buffer edit 시 누적 본문 유실/이중 송출.
+    //  해결: STREAM_MAX_CHARS = CONTENT_SAFE_LIMIT (1700) 동기화 → _sendOrEdit 내부 split 미발동.
+    let _dupIter = 0;
     while (this.buffer.length > STREAM_MAX_CHARS) {
       const splitAt = this._findSplitPoint(this.buffer, STREAM_MAX_CHARS);
       let chunk = this.buffer.slice(0, splitAt);
       this.buffer = this.buffer.slice(splitAt);
+      // [DUP-DIAG] chunk-per-message 진입 — 이전 cumulative edit으로 송출됐을 가능성 있는 sentLength 추적
+      log('info', 'DUP-DIAG chunk-per-message iter', {
+        iter: ++_dupIter,
+        chunkLen: chunk.length,
+        chunkHead: chunk.slice(0, 60),
+        bufferRemaining: this.buffer.length,
+        prevSentLength: this.sentLength,  // 직전 cumulative edit이 송출한 길이
+      });
 
       // fenceOpen: 이전 청크에서 이미 열린 펜스가 있는지 포함해서 계산
       const fencesInChunk = (chunk.match(/```/g) || []).length;
@@ -771,7 +802,12 @@ export class StreamingMessage {
         this.fenceOpen = false; // 이 청크 끝에서 펜스 닫힘
       }
 
+      // chunk는 새 메시지 1개로 송출 (모델 A: chunk-per-message).
+      // _sendOrEdit이 currentMessage가 있으면 edit, 없으면 send. 우리는 강제로 새 메시지 모드.
+      this.currentMessage = null;   // 다음 _sendOrEdit이 channel.send로 새 메시지 생성
+      this.sentLength = 0;          // 새 메시지 시작 → 누적 길이 리셋
       await this._sendOrEdit(chunk, true);
+      // 송출 후 currentMessage는 새 chunk 메시지로 세팅됨. 다음 chunk를 위해 다시 리셋.
       this.currentMessage = null;
       this.sentLength = 0;
     }
@@ -780,6 +816,8 @@ export class StreamingMessage {
       // fenceOpen 업데이트: 남은 버퍼의 펜스 상태 반영 (finalize용)
       const fencesInRemaining = (this.buffer.match(/```/g) || []).length;
       if (fencesInRemaining % 2 === 1) this.fenceOpen = !this.fenceOpen;
+      // 잔여 buffer는 모델 B (cumulative edit): currentMessage(또는 null이면 send)에 전체 edit.
+      // sentLength = buffer.length 가 _sendOrEdit 내부에서 마킹됨.
       await this._sendOrEdit(this.buffer, false);
     }
     // P3-1: CHART_DATA / TABLE_DATA 마커가 완성되면 백그라운드 렌더링 사전 실행
@@ -917,7 +955,14 @@ export class StreamingMessage {
     const CONTENT_SAFE_LIMIT = 1700; // 확장분 여유 300자
     const _previewDisplay = this._composeDisplay(content, isFinal);
     if (content.length > CONTENT_SAFE_LIMIT || _previewDisplay.length > DISCORD_LIMIT) {
-      log('warn', '_sendOrEdit: limit exceeded (content or display) — splitting', {
+      // [2026-04-26 RC-1 안전망] 정상 경로에서는 _flushInner의 STREAM_MAX_CHARS(1700)가
+      //   content를 1700 이하로 자르므로 이 분기는 발동되지 않음. 발동되면 계약 위반 또는
+      //   _composeDisplay가 statusBar/cursor로 1700 → 1990+ 부풀린 케이스. 양쪽 다 안전망.
+      //
+      //   주의: 이 split 경로는 buffer/sentLength 외부 상태를 건드리지 않음 (책임 경계).
+      //         호출자(_flushInner)가 chunk를 이미 슬라이스했으므로, 이 경로가 끝난 후
+      //         호출자가 currentMessage=null + sentLength=0 을 어떻게 보든 정합성 유지.
+      log('warn', '_sendOrEdit: limit exceeded (content or display) — splitting (안전망 발동, 계약 점검 필요)', {
         contentLen: content.length, displayLen: _previewDisplay.length
       });
       const parts = _splitIntoChunks(content, CONTENT_SAFE_LIMIT);
@@ -1092,9 +1137,20 @@ export class StreamingMessage {
   }
 
   async finalize() {
+    // [DUP-DIAG 2026-04-26] finalize 진입 추적 (race 가설 H1 검증용)
+    log('info', 'DUP-DIAG finalize 진입', {
+      bufferLen: this.buffer.length,
+      sentLength: this.sentLength,
+      currentMessageId: this.currentMessage?.id || null,
+      finalizeComplete: this._finalizeComplete,
+      finalized: this.finalized,
+    });
     // 멱등성 보장: 비활성 타임아웃 등 이중 호출 시 두 번째는 no-op
     // (this.finalized는 _sendOrEdit 커서 표시에 여전히 사용되므로 별도 플래그 사용)
-    if (this._finalizeComplete) return;
+    if (this._finalizeComplete) {
+      log('warn', 'DUP-DIAG finalize 멱등 가드 발동 — 중복 호출 차단됨');
+      return;
+    }
     this._finalizeComplete = true;
     this.finalized = true;
     if (this.timer) {
