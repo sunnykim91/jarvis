@@ -26,7 +26,7 @@ MTIME_LATEST="${SNAPSHOT_DIR}/latest-mtimes.tsv"
 
 mkdir -p "$LEDGER_DIR" "$SNAPSHOT_DIR"
 
-TS_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+TS_ISO=$(TZ=Asia/Seoul date +"%Y-%m-%dT%H:%M:%S%z")
 
 # 현재 스냅샷 — 한 줄당 "label\textension"
 NOW=$(mktemp /tmp/la-snap-now-XXXXXX.txt)
@@ -131,6 +131,39 @@ if [[ -f "$MTIME_LATEST" ]]; then
       CHANGES=$((CHANGES+1))
       if [[ "$state" == "UNLOADED" ]]; then
         DISCORD_LINES+=("🚨 plist 편집 후 **UNLOADED**: \`$entry\` — guardian 3분 내 복구 기대")
+      fi
+
+      # --- ProgramArguments 패턴 검증 (2026-04-22 재발 방지 가드) ---
+      # output:["discord"] 태스크의 plist 편집이 감지되면 bot-cron.sh 경유 여부 확인.
+      # 위반 시 BYPASS 재발로 즉시 경보 + ledger 별도 기록.
+      # daily-usage-check 4일 침묵 사건(2026-04-19~22) 재발 차단.
+      plist_path="$LA_DIR/$entry"
+      task_id="${label#com.jarvis.}"
+      task_id="${task_id#ai.jarvis.}"
+      eff_tasks="${HOME}/jarvis/runtime/config/effective-tasks.json"
+      if [[ -f "$eff_tasks" && -f "$plist_path" ]]; then
+        is_discord=$(jq -r --arg tid "$task_id" \
+          '.tasks[]? | select(.id==$tid) | select((.output // []) | index("discord")) | .id' \
+          "$eff_tasks" 2>/dev/null | head -1)
+        if [[ -n "$is_discord" ]] && ! grep -q 'bot-cron\.sh' "$plist_path" 2>/dev/null; then
+          printf '{"ts":"%s","action":"program_args_violation","entry":"%s","task":"%s","reason":"discord_task_bypasses_bot_cron"}\n' \
+            "$TS_ISO" "$entry" "$task_id" >> "$LEDGER"
+          DISCORD_LINES+=("🚨 **BYPASS 재발**: \`$entry\` — output:discord 태스크가 bot-cron.sh 우회 (plist-bypass-autofix 다음 06:00 자동 복구 대기)")
+          CHANGES=$((CHANGES+1))
+        fi
+      fi
+
+      # --- 🔏 1층 방어막: plist 서명 검증 (2026-04-22 P1 도입) ---
+      # cron-sync.sh v1.0 부터 생성 plist 에 "JARVIS_GENERATED_BY:" 서명 주석 삽입.
+      # mtime 변경 후 서명이 없으면 "누가 만들었는지 추적 불가한 plist" → unsigned_plist 경보.
+      # grandfather clause: mtime_changed 이벤트 시점에만 검사 → 기존 plist 는 수정되지 않는 한 통과.
+      if [[ -f "$plist_path" ]]; then
+        if ! grep -q 'JARVIS_GENERATED_BY:' "$plist_path" 2>/dev/null; then
+          printf '{"ts":"%s","action":"unsigned_plist","entry":"%s","task":"%s","reason":"plist_edited_without_jarvis_signature"}\n' \
+            "$TS_ISO" "$entry" "$task_id" >> "$LEDGER"
+          DISCORD_LINES+=("🔏 **서명 없는 plist 편집**: \`$entry\` — cron-sync.sh 우회 생성/편집 의심 (추적 불가)")
+          CHANGES=$((CHANGES+1))
+        fi
       fi
     done <<< "$MTIME_CHANGED"
   fi

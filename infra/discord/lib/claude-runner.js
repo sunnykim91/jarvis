@@ -29,7 +29,7 @@ import {
   buildPrinciplesSection, buildFormatCoreSection, buildFormatDetailSection,
   buildFormatSection, buildToolsSection,
   buildSafetySection, buildUserContextSection,
-  buildOwnerPreferencesSection, buildOwnerPersonaSection, buildFamilyBriefingContext,
+  buildOwnerPreferencesSection, buildOwnerPersonaSection, buildOwnerVisualizationSection, buildFamilyBriefingContext,
   buildWikiContextSection,
 } from './prompt-sections.js';
 import { getPromptHarness, Tier } from './prompt-harness.js';
@@ -306,7 +306,7 @@ export async function execRagAsync(query, opts = {}) {
 function _isSimulationTurn(userMsg) {
   if (!userMsg) return false;
   const text = userMsg.toLowerCase();
-  // 슬래시 커맨드 형태 — ~/.jarvis/skills/<name>.md 파일 존재 여부로 판정.
+  // 슬래시 커맨드 형태 — ~/jarvis/runtime/skills/<name>.md 파일 존재 여부로 판정.
   // (claude-runner 상단의 fs/path/os 임포트를 공유)
   const slashMatch = userMsg.trim().match(/^\/([a-zA-Z0-9_-]+)/);
   if (slashMatch) {
@@ -314,7 +314,8 @@ function _isSimulationTurn(userMsg) {
     if (existsSync(skillPath)) return true;
   }
   // 트리거 키워드 — 스킬 frontmatter triggers와 정합. 추가 스킬 생길 때 이 배열도 확장.
-  const triggers = ['모의면접', '면접 연습', '면접 답변', '면접 준비', '면접관 해줘'];
+  // privacy:allow career-narratives — mock-interview 스킬 활성 트리거 (기능 필수, 서사 아님)
+  const triggers = ['모의면접', '면접 연습', '면접 답변', '면접 준비', '면접관 해줘']; // privacy:allow career-narratives
   return triggers.some((t) => text.includes(t.toLowerCase()));
 }
 
@@ -807,7 +808,7 @@ export async function* createClaudeSession(prompt, {
   }
 
   // ---------------------------------------------------------------------------
-  // 공통 스킬 주입 (~/.jarvis/skills/) — CLI·Discord·Mac 앱이 SSoT로 공유
+  // 공통 스킬 주입 (~/jarvis/runtime/skills/) — CLI·Discord·Mac 앱이 SSoT로 공유
   // 주입 우선순위:
   //   1) 슬래시 커맨드 (`/skillname args`) — 명시적, 최우선
   //   2) 채널 매칭 (skill의 channels에 현재 채널 포함)
@@ -853,6 +854,10 @@ export async function* createClaudeSession(prompt, {
     if (createClaudeSession._ownerPrefsCache) {
       systemParts.push('', createClaudeSession._ownerPrefsCache);
     }
+
+    // Visual output design policy (AI Slop prevention) — applies to Discord cards, jarvis-board, etc.
+    const visualizationSection = buildOwnerVisualizationSection({ botHome: BOT_HOME });
+    if (visualizationSection) systemParts.push('', visualizationSection);
   }
 
   // Session version check: compute hash from STABLE systemParts (persona + user context only).
@@ -1017,8 +1022,24 @@ export async function* createClaudeSession(prompt, {
   // jarvis-lite(small) → Haiku (빠른 응답, 50턴)
   // channelOverrides에 등록된 채널 → 지정 모델 (직접 실행, opusplan 아님)
   // 그 외 → opusplan (계획 Opus, 실행 Sonnet, 200턴)
+  // P2-2: ADAPTIVE_MODEL_ENABLED=1 이면 프롬프트 분류로 trivial → fast 다운그레이드.
   const maxTurns = contextBudget === 'small' ? 50 : 200;
-  const channelModelKey = channelName && MODELS.channelOverrides?.[channelName];
+  let channelModelKey = channelName && MODELS.channelOverrides?.[channelName];
+  if (process.env.ADAPTIVE_MODEL_ENABLED === '1' && contextBudget !== 'small' && channelModelKey) {
+    try {
+      const { resolveModelTier } = await import('./adaptive-model.js');
+      const resolved = resolveModelTier(channelModelKey, prompt);
+      if (resolved.downgraded) {
+        log('info', 'adaptive-model: downgraded', {
+          from: channelModelKey, to: resolved.tier, reason: resolved.reason,
+          channelName, promptLen: prompt.length,
+        });
+        channelModelKey = resolved.tier;
+      }
+    } catch (err) {
+      log('warn', 'adaptive-model routing failed (using base tier)', { error: err.message });
+    }
+  }
   const model = contextBudget === 'small' ? MODELS.fast : (channelModelKey ? MODELS[channelModelKey] : 'opusplan');
 
   // 7. Load MCP server config (same servers, now as SDK mcpServers object)
@@ -1092,10 +1113,21 @@ export async function* createClaudeSession(prompt, {
     // 이유: SDK 'default' 모드에서 내부 'allow' 판정된 tool은 canUseTool 콜백을
     //      아예 호출하지 않아 Read/Glob/Grep 등 대부분 tool에 대한 민감 경로 검사
     //      bypass 가능. PreToolUse 훅은 SDK 내부 판정과 무관하게 모든 tool에 발화.
-    permissionMode: 'default',
+    //
+    // 2026-04-20: 'default' → 'bypassPermissions'.
+    //   SDK 내장 센서티브 리스트(~/.claude/** 등)가 권한 프롬프트를 띄우는데
+    //   Discord 봇에는 승인 UI가 없어 자동 거부 처리됨 → 정당한 작업(.claude/
+    //   commands/* archive 이동 등)도 막힘. bypassPermissions 로 SDK 내장 체크
+    //   우회. 진짜 민감 경로(.env / .ssh/id_* / secrets/*) 차단은 아래 PreToolUse
+    //   훅의 security-guard.js 가 단일 책임(SSoT)으로 보증.
+    permissionMode: 'bypassPermissions',
     hooks: {
       PreToolUse: [{
         hooks: [async (input) => {
+          // (2026-04-22 제거) MAX_TOOL_CALLS=8 하드코딩 가드 삭제.
+          // 이유: 오너 지시로 조사형 세션에서 턴당 8회 제한이 실사용을 가로막음.
+          // handlers.js:95 주석과 SSoT 동기화 — SDK maxTurns(200) + 10분 timeout +
+          // maxBudget이 이미 폭주를 차단. 단일 책임은 MAX_CONTINUATIONS=5(handlers.js).
           try {
             const blocked = checkSensitivePath(input.tool_name, input.tool_input);
             if (blocked) {
@@ -1135,6 +1167,11 @@ export async function* createClaudeSession(prompt, {
     mcpServers,
     maxTurns,
     model,
+    // effort: channelOverrides와 동일 방식으로 effortOverrides에서 채널별 effort 레벨 결정
+    ...((() => {
+      const effortKey = channelName && MODELS.effortOverrides?.[channelName];
+      return effortKey ? { effort: effortKey } : {};
+    })()),
     // inference_geo: 환경변수 설정 시에만 적용 (미설정 시 Anthropic 기본 라우팅)
     ...(process.env.INFERENCE_GEO ? { inference_geo: process.env.INFERENCE_GEO } : {}),
     includePartialMessages: true,

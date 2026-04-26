@@ -17,13 +17,13 @@
 | Layer | 위치 | 역할 | 쓰기 권한 |
 |-------|------|------|-----------|
 | **Raw** | session-summaries, user-memory, RAG LanceDB | 원본 소스 (불변) | 기존 시스템 |
-| **Wiki** | `~/.jarvis/wiki/` | LLM이 합성한 구조화 지식 | wiki-ingest 크론 |
-| **Schema** | `~/.jarvis/wiki/schema.md` | 위키 규칙, 페이지 타입, 워크플로우 | 수동 |
+| **Wiki** | `~/jarvis/runtime/wiki/` | LLM이 합성한 구조화 지식 | wiki-ingest 크론 |
+| **Schema** | `~/jarvis/runtime/wiki/schema.md` | 위키 규칙, 페이지 타입, 워크플로우 | 수동 |
 
 ## 디렉토리 구조
 
 ```
-~/.jarvis/wiki/
+~/jarvis/runtime/wiki/
 ├── schema.md          # 위키 규칙 정의
 ├── index.md           # 전체 페이지 카탈로그 (자동 갱신)
 ├── log.jsonl          # 변경 이력 (append-only)

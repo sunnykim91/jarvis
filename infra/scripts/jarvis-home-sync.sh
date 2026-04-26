@@ -63,14 +63,14 @@ if ! git merge upstream/main --no-edit --quiet >>"$LOG" 2>&1; then
       alert "⚠️ jarvis-home-sync: merge 충돌 후 stash pop도 실패. stash 잔류 가능 — \`git stash list\` 확인 필요"
     fi
   fi
-  alert "⚠️ jarvis-home-sync: upstream merge 충돌. 수동 처리 필요 (\`cd ~/.jarvis && git merge upstream/main\`)"
+  alert "⚠️ jarvis-home-sync: upstream merge 충돌. 수동 처리 필요 (\`cd ~/jarvis/runtime && git merge upstream/main\`)"
   exit 1
 fi
 
 # stash 복원
 if [[ "$STASHED" -eq 1 ]]; then
   if ! git stash pop >>"$LOG" 2>&1; then
-    alert "⚠️ jarvis-home-sync: stash pop 충돌. 확인 필요 (\`cd ~/.jarvis && git stash show\`)"
+    alert "⚠️ jarvis-home-sync: stash pop 충돌. 확인 필요 (\`cd ~/jarvis/runtime && git stash show\`)"
     exit 1
   fi
 fi

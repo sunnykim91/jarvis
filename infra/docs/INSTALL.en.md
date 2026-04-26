@@ -159,8 +159,8 @@ docker compose down
 ### One-click Install (setup.sh — recommended)
 
 ```bash
-git clone https://github.com/your-username/jarvis ~/.jarvis
-cd ~/.jarvis
+git clone https://github.com/your-username/jarvis ~/jarvis/runtime
+cd ~/jarvis/runtime
 chmod +x setup.sh
 ./setup.sh
 ```
@@ -168,8 +168,8 @@ chmod +x setup.sh
 ### Manual Install
 
 ```bash
-git clone https://github.com/your-username/jarvis ~/.jarvis
-cd ~/.jarvis
+git clone https://github.com/your-username/jarvis ~/jarvis/runtime
+cd ~/jarvis/runtime
 cp .env.example .env
 nano .env   # fill in your tokens
 ```
@@ -184,7 +184,7 @@ launchctl load ~/Library/LaunchAgents/ai.jarvis.discord-bot.plist
 launchctl list | grep jarvis
 
 # View logs
-tail -f ~/.jarvis/logs/discord-bot.log
+tail -f ~/jarvis/runtime/logs/discord-bot.log
 ```
 
 ### Run with PM2 (alternative)
@@ -208,8 +208,8 @@ pm2 startup && pm2 save
 ### One-click Install (setup.sh — recommended)
 
 ```bash
-git clone https://github.com/your-username/jarvis ~/.jarvis
-cd ~/.jarvis
+git clone https://github.com/your-username/jarvis ~/jarvis/runtime
+cd ~/jarvis/runtime
 chmod +x setup.sh
 ./setup.sh
 ```
@@ -217,8 +217,8 @@ chmod +x setup.sh
 ### Manual Install
 
 ```bash
-git clone https://github.com/your-username/jarvis ~/.jarvis
-cd ~/.jarvis
+git clone https://github.com/your-username/jarvis ~/jarvis/runtime
+cd ~/jarvis/runtime
 cp .env.example .env
 nano .env   # fill in your tokens
 ```
@@ -227,7 +227,7 @@ nano .env   # fill in your tokens
 
 ```bash
 npm install -g pm2
-cd ~/.jarvis
+cd ~/jarvis/runtime
 pm2 start ecosystem.config.cjs
 pm2 startup systemd   # copy and run the output command
 pm2 save
@@ -316,7 +316,7 @@ docker compose up -d --build
 ```bash
 pm2 logs jarvis-bot --lines 100       # Linux/macOS PM2
 docker logs jarvis --tail 100          # Windows/Docker
-tail -f ~/.jarvis/logs/discord-bot.log # macOS/Linux native
+tail -f ~/jarvis/runtime/logs/discord-bot.log # macOS/Linux native
 ```
 
 ---

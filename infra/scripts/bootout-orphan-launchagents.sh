@@ -37,7 +37,7 @@ TODAY="$(date +%Y%m%d)"
 LA_DIR="$HOME/Library/LaunchAgents"
 BACKUP_DIR="$LA_DIR/_orphan-backup-${TODAY}"
 TASKS_JSON="$HOME/jarvis/runtime/config/tasks.json"
-LOG_DIR="$HOME/.jarvis/logs"
+LOG_DIR="$HOME/jarvis/runtime/logs"
 LOG_FILE="$LOG_DIR/bootout-orphan-${TS}.log"
 
 # 3 LaunchAgent labels to bootout (no .plist suffix)

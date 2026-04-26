@@ -8,7 +8,7 @@
  *   pm2 startup && pm2 save
  */
 
-const JARVIS_HOME = process.env.JARVIS_HOME || require('os').homedir() + '/.jarvis'
+const JARVIS_HOME = process.env.JARVIS_HOME || require('os').homedir() + '/jarvis/runtime'
 
 module.exports = {
   apps: [
@@ -30,7 +30,7 @@ module.exports = {
     },
     {
       name: 'jarvis-rag-watcher',
-      script: 'lib/rag-watch.mjs',
+      script: 'rag/lib/rag-watch.mjs',
       cwd: JARVIS_HOME,
       interpreter: 'node',
       interpreter_args: '--max-old-space-size=150',

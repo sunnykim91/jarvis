@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# RAG 스크립트 위치 자동 감지
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# RAG 스크립트 위치 자동 감지 (symlink chain resolve — runtime/scripts에서 호출돼도 rag/scripts 기준으로)
+# runtime/rag/bin/과 rag/bin/은 별개 디렉토리이며 node_modules는 rag/에만 있음.
+_self="$0"
+while [ -L "$_self" ]; do
+  _link="$(readlink "$_self")"
+  case "$_link" in
+    /*) _self="$_link" ;;
+    *)  _self="$(dirname "$_self")/$_link" ;;
+  esac
+done
+SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
 RAG_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # INFRA_HOME 결정: BOT_HOME > ~/.local/share/jarvis
@@ -47,7 +56,7 @@ if [ "$_bypass_cooldown" -eq 0 ] && [ -f "$COOLDOWN_FILE" ]; then
 fi
 
 # rag-index가 실행 중이면 compact 건너뜀
-if pgrep -f "rag-index.mjs" > /dev/null 2>&1; then
+if pgrep -f "/rag-index.mjs" > /dev/null 2>&1; then
   echo "[$(ts)] [rag-compact] rag-index 실행 중 — compact 건너뜀" >> "$LOG"
   exit 0
 fi

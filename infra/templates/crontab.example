@@ -86,8 +86,10 @@
 # [Monitoring] 시스템 감시 · 헬스체크 · 자가복구
 # ────────────────────────────────────────────────────────────────────────────
 
-# 통합 모니터링 파이프라인 (06:00, 12:00, 18:00)
-0 6,12,18 * * * PATH=__NODE_PREFIX__:__NODE_PREFIX__/../sbin:/usr/local/bin:/usr/bin:/bin BOT_HOME=__JARVIS_HOME__ /bin/bash __JARVIS_HOME__/bin/cron-monitoring-orchestrator.sh pipeline auto >> __JARVIS_HOME__/logs/cron-monitoring-orchestrator.log 2>&1
+# 통합 모니터링 파이프라인 — [2026-04-21 제거됨]
+# 아래 */30 예방적 모니터링이 동일한 cron-master.sh를 호출하므로 06/12/18 3회는 완전 중복.
+# 필요 시 주석 해제하여 복원 가능 (pipeline vs component는 내부 분기 없이 동일 delegate).
+# 0 6,12,18 * * * PATH=__NODE_PREFIX__:__NODE_PREFIX__/../sbin:/usr/local/bin:/usr/bin:/bin BOT_HOME=__JARVIS_HOME__ /bin/bash __JARVIS_HOME__/bin/cron-monitoring-orchestrator.sh pipeline auto >> __JARVIS_HOME__/logs/cron-monitoring-orchestrator.log 2>&1
 # 모니터링 맹점 분석 (매일 05:00)
 0 5 * * * PATH=__NODE_PREFIX__:__NODE_PREFIX__/../sbin:/usr/local/bin:/usr/bin:/bin BOT_HOME=__JARVIS_HOME__ /bin/bash __JARVIS_HOME__/lib/cron-blindspot-analyzer.sh analyze >> __JARVIS_HOME__/logs/cron-blindspot-analyzer.log 2>&1
 # 스마트 자가복구 리포트 (10분마다)
@@ -194,8 +196,9 @@
 0 9 1 * * /bin/bash __JARVIS_HOME__/bin/bot-cron.sh monthly-review >> __JARVIS_HOME__/logs/cron.log 2>&1
 # 스킬 평가 (일요일 04:30)
 30 4 * * 0 /bin/bash __JARVIS_HOME__/bin/bot-cron.sh skill-eval >> __JARVIS_HOME__/logs/cron.log 2>&1
-# 커리어 위클리 (금요일 18:00)
-0 18 * * 5 /bin/bash __JARVIS_HOME__/bin/bot-cron.sh career-weekly >> __JARVIS_HOME__/logs/cron.log 2>&1
+# 주간 활동 리포트 (금요일 18:00) — 개인 도메인 활동 요약
+# 실제 태스크 이름은 private/config/tasks-private.json 에서 오버라이드 가능.
+0 18 * * 5 /bin/bash __JARVIS_HOME__/bin/bot-cron.sh profile-weekly >> __JARVIS_HOME__/logs/cron.log 2>&1
 # 브랜드 위클리 (화요일 08:00)
 0 8 * * 2 /bin/bash __JARVIS_HOME__/bin/bot-cron.sh brand-weekly >> __JARVIS_HOME__/logs/cron.log 2>&1
 # OSS 문서 (수요일 11:00)

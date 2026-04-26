@@ -15,13 +15,50 @@ const USERS_DIR = join(BOT_HOME, 'state', 'users');
 const FAMILY_JUNK_RE = /^\[userid:|compacted at|사용자 의도|완료된 작업|미완 작업|핵심 참조/i;
 
 // 카테고리 자동 감지 — 텍스트 키워드 기반 분류
+// 주의: CATEGORY_LIMITS/MONITOR_SOFT_LIMITS와 SSoT 정합성 유지 (카테고리 추가 시 3곳 동시 갱신)
 const CATEGORY_RULES = [
   { cat: 'trading',  re: /stock|주식|트레이딩|레버리지|etf|매수|매도|포트폴리오|s&p|nasdaq|코스피|cpi|fomc|금리|배당|수익률/i },
-  { cat: 'work',     re: /sk\s*d&d|sk디앤디|백엔드|spring|kafka|grpc|redis|aws|이직|면접|연봉|프로젝트|업무|회사|사수|팀장|개발/i },
+  { cat: 'work',     re: /백엔드|spring|kafka|grpc|redis|aws|이직|면접|연봉|프로젝트|업무|회사|사수|팀장|개발/i },
+  { cat: 'jarvis',   re: /자비스|jarvis|디스코드봇|디스코드 봇|mcp\b|rag\b|크론|플러그인|워커|에이전트|워크그룹|자비스맵/i },
   { cat: 'family',   re: /아내|와이프|가족|부모님|아이|육아/i },
-  { cat: 'travel',   re: /여행|치앙마이|삿포로|해외|항공|숙소|노보리베쓰|휴가|출장/i },
-  { cat: 'health',   re: /건강|운동|병원|의사|약|몸무게|다이어트|수면|피로|두통/i },
+  { cat: 'travel',   re: /여행|destination-a|destination-b|해외|항공|숙소|노보리베쓰|휴가|출장/i },
+  { cat: 'health',   re: /건강|운동|병원|의사|약|몸무게|다이어트|수면|피로|두통|보험|난임|출산|임신/i },
+  { cat: 'profile',  re: /튜터|교사|강사|직업|나이|살\b|\d+세\b|학력|출신|계정|이메일/i },
+  { cat: 'students', re: /학생|수업|수업료|레슨|preply|borui|mahlee|paula|lucia|katherine|lara|alissa|marko|kaylie|nat\b/i },
 ];
+
+// 카테고리별 최대 fact 저장 한도 (초과 시 가장 오래된 것 제거)
+// 주의: jarvis 카테고리는 의도적으로 CATEGORY_LIMITS 미등록 —
+//       옛 addFact-우회 데이터(2026-04-21 이전 마이그레이션 산물) 보존 목적.
+//       단, 모니터링은 MONITOR_SOFT_LIMITS.jarvis가 담당.
+const CATEGORY_LIMITS = {
+  profile:  5,
+  students: 20,
+  health:   10,
+  work:     15,
+  trading:  15,
+  travel:   10,
+  family:   10,
+  general:  15,
+};
+
+// monitor 전용 경보 임계치 — SSoT 단일 출처
+// user-memory-monitor.sh가 node -e로 import하여 동적 감시 루프 생성
+// 원칙: soft >= hard (addFact 자동정리로 도달 불가면 dead guard → addFact 우회 경로 감지 전용)
+export const MONITOR_SOFT_LIMITS = {
+  general:  40,
+  jarvis:   60,   // CATEGORY_LIMITS 미등록, monitor만 일방 감시 (옛 데이터 누적 감시)
+  work:     50,
+  trading:  35,
+  health:   25,
+  family:   20,
+  students: 25,
+  travel:   15,   // hard=10 대비 이중보험 (감사관 권고)
+  profile:  8,    // hard=5 대비 이중보험 (감사관 권고)
+};
+
+// 전체 facts 합계 경보 임계치
+export const MONITOR_TOTAL_WARN = 250;
 
 function detectCategory(text) {
   for (const { cat, re } of CATEGORY_RULES) {
@@ -46,7 +83,9 @@ function _load(userId) {
     merged.plans = Array.isArray(merged.plans) ? merged.plans : [];
     return merged;
   } catch (err) {
-    console.warn(`[user-memory] JSON parse failed for userId=${userId}: ${err.message}`);
+    if (err.code !== 'ENOENT') {
+      console.warn(`[user-memory] JSON parse failed for userId=${userId}: ${err.message}`);
+    }
     return defaults;
   }
 }
@@ -61,18 +100,60 @@ export const userMemory = {
     return _load(userId);
   },
 
-  addFact(userId, fact, source = 'unknown') {
+  // name 독립 주입 API — addFact 경로 밖에서도 name 갱신 가능 (메시지 진입·관리 도구 등).
+  // force=false(기본): 기존 name이 있으면 덮어쓰지 않음. force=true: 무조건 덮어쓰기.
+  // 반환: true = 변경됨, false = 무변경
+  setName(userId, name, force = false) {
+    if (!name || typeof name !== 'string') return false;
+    const trimmed = name.trim();
+    if (!trimmed) return false;
     const data = _load(userId);
+    if (data.name === trimmed) return false;
+    if (data.name && !force) return false;
+    data.name = trimmed;
+    data.updatedAt = new Date().toISOString();
+    _save(data);
+    return true;
+  },
+
+  // displayName: optional — 호출 지점(handlers.js·commands.js 등)에서 Discord displayName/username 전달.
+  //              비어있지 않고 data.name이 공백이면 1회성 주입 (monitor 'unknown' 표기 방지).
+  //              이미 data.name이 있으면 덮어쓰지 않음 (수동 편집 존중).
+  addFact(userId, fact, source = 'unknown', importance = 'medium', displayName = '') {
+    const data = _load(userId);
+    // name 백필: 비어있을 때만 1회 주입 (관측성 개선, Iron Law 2: 검증된 데이터만)
+    if (displayName && typeof displayName === 'string' && !data.name) {
+      data.name = displayName.trim();
+    }
     // facts는 string 또는 {text, addedAt[, category][, source]} 혼용 허용 (하위 호환)
     const normText = (f) => (typeof f === 'string' ? f : f?.text ?? '');
     const exists = data.facts.some(f => normText(f) === fact);
     if (!exists) {
+      const category = detectCategory(fact);
       data.facts.push({
         text: fact,
         addedAt: new Date().toISOString(),
-        category: detectCategory(fact),
+        category,
+        importance,
         source,
       });
+      // 카테고리 한도 초과 시 중요도 낮은 것 → 오래된 것 순서로 제거
+      const limit = CATEGORY_LIMITS[category] ?? 20;
+      const catFacts = data.facts.filter(f => (typeof f === 'string' ? 'general' : (f?.category ?? 'general')) === category);
+      if (catFacts.length > limit) {
+        const IMPORTANCE_RANK = { high: 3, medium: 2, low: 1 };
+        // 같은 카테고리 내에서 중요도 오름차순, 날짜 오름차순 정렬 → 맨 앞 것 제거
+        const sorted = catFacts.sort((a, b) => {
+          const ia = IMPORTANCE_RANK[a?.importance ?? 'medium'] ?? 2;
+          const ib = IMPORTANCE_RANK[b?.importance ?? 'medium'] ?? 2;
+          if (ia !== ib) return ia - ib; // 중요도 낮은 것 먼저
+          const ta = a?.addedAt ? new Date(a.addedAt).getTime() : 0;
+          const tb = b?.addedAt ? new Date(b.addedAt).getTime() : 0;
+          return ta - tb; // 오래된 것 먼저
+        });
+        const toRemoveText = normText(sorted[0]);
+        data.facts = data.facts.filter(f => normText(f) !== toRemoveText);
+      }
       data.updatedAt = new Date().toISOString();
       _save(data);
       return true;
@@ -174,6 +255,9 @@ export const userMemory = {
       // 프롬프트 카테고리 감지 → 해당 카테고리 fact 부스트
       const promptCategory = detectCategory(currentPrompt);
 
+      // 중요도 → 점수 가중치
+      const IMPORTANCE_BOOST = { high: 0.5, medium: 0.2, low: 0.0 };
+
       // 각 fact에 관련성 점수 산출
       const scored = allFacts.map(f => {
         const factWords = tokenize(f.text);
@@ -193,6 +277,8 @@ export const userMemory = {
         }
         // 카테고리 매칭 부스트 — 같은 주제끼리 우선 surfacing
         if (f.category !== 'general' && f.category === promptCategory) score += 0.4;
+        // 중요도 부스트 — high importance는 항상 우선 노출
+        score += IMPORTANCE_BOOST[f?.importance ?? 'medium'] ?? 0.2;
         return { ...f, score };
       });
 

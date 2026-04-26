@@ -7,13 +7,13 @@ Jarvis splits config across three locations:
 
 | Location | Purpose |
 |---|---|
-| `~/.jarvis/config/` | **Runtime** config read by crons, bot, scripts |
+| `~/jarvis/runtime/config/` | **Runtime** config read by crons, bot, scripts |
 | `~/jarvis/infra/*` | **Code-embedded** config (package.json, compose, plists templates) |
 | `~/Library/LaunchAgents/ai.jarvis.*.plist` | **macOS launchd** service definitions |
 
 ---
 
-## 1. Task Registry — `~/.jarvis/config/tasks.json`
+## 1. Task Registry — `~/jarvis/runtime/config/tasks.json`
 
 **The SSoT for every scheduled cron in Jarvis.** 82 tasks as of now.
 
@@ -44,7 +44,7 @@ Jarvis splits config across three locations:
 
 ```bash
 # 1. Validate JSON before save
-python3 -m json.tool ~/.jarvis/config/tasks.json > /dev/null
+python3 -m json.tool ~/jarvis/runtime/config/tasks.json > /dev/null
 
 # 2. Regenerate docs
 node ~/jarvis/infra/scripts/gen-tasks-index.mjs
@@ -56,7 +56,7 @@ node ~/jarvis/infra/scripts/gen-tasks-index.mjs
 
 ---
 
-## 2. Other `~/.jarvis/config/` Files
+## 2. Other `~/jarvis/runtime/config/` Files
 
 | File | Used by | Purpose |
 |---|---|---|
@@ -101,8 +101,8 @@ node ~/jarvis/infra/scripts/gen-tasks-index.mjs
 | File | Consumer | Notes |
 |---|---|---|
 | `~/.mcp.json` | Claude Code CLI | Project-level MCP servers (brave, github, serena, etc.) |
-| `~/.jarvis/config/serena-mcp.json` | Selected crons | Serena LSP-only profile |
-| `~/.jarvis/config/empty-mcp.json` | `ask-claude.sh` | Jarvis gateway uses zero MCP |
+| `~/jarvis/runtime/config/serena-mcp.json` | Selected crons | Serena LSP-only profile |
+| `~/jarvis/runtime/config/empty-mcp.json` | `ask-claude.sh` | Jarvis gateway uses zero MCP |
 | `~/jarvis/infra/lib/mcp-nexus.mjs` | infra | In-process MCP bridge |
 | `~/jarvis/infra/lib/nexus/` | various | MCP shims |
 

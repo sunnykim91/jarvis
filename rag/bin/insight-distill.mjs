@@ -5,7 +5,7 @@
  * Reads behavioural metrics + conversation summaries,
  * then uses ask-claude.sh (claude -p) to extract high-level user insights.
  *
- * Output: ~/.jarvis/context/insight-report.md
+ * Output: ~/jarvis/runtime/context/insight-report.md
  *
  * Run: node rag/bin/insight-distill.mjs
  * Cron: daily 04:00 (after entity-graph at 03:45)
@@ -182,13 +182,13 @@ ${dailyLines}
 - "왜 이 숫자들이 이렇게 변하고 있는가?"를 해석하라
 
 ## 좋은 인사이트 예시
-- "커리어 토픽이 534배 급증 — 면접 준비에 집중 전환한 것으로 보임"
-- "AI/자비스 토픽 하락(x0.36) + 커리어 급등 → 시스템 구축에서 이직 준비로 focus shift"
-- "4/1-4 소강기 후 4/5 활동 폭발 → 면접 날짜 확정 후 집중 모드"
+- "토픽 X 가 534배 급증 — 특정 목표에 집중 전환한 것으로 보임"
+- "AI/자비스 토픽 하락(x0.36) + 도메인 Y 급등 → 시스템 구축에서 다른 영역으로 focus shift"
+- "4/1-4 소강기 후 4/5 활동 폭발 → 중요 이벤트 확정 후 집중 모드"
 
 ## 카테고리
-- life_phase: 생애 단계 전환 (이직, 학습기, 안정기)
-- goal: 단기 목표 (면접 통과, 프로젝트 완성)
+- life_phase: 생애 단계 전환 (활동기/학습기/안정기 등)
+- goal: 단기 목표 (프로젝트 완성 등)
 - concern: 우려/불안 (도메인 미경험, 시간 부족)
 - momentum: 활동 추세 변화 (증가/감소/전환)
 
@@ -206,7 +206,7 @@ ${existingSection}
 
 ## 출력 형식
 반드시 JSON 배열만 출력. 5-8개. 설명문 없이 JSON만.
-[{"insight_text":"현재 이직 활동이 면접 단계에 진입했다","category":"life_phase","confidence":0.9,"evidence_summary":"면접 준비 문서, 이력서 최종 수정, 도메인 Q&A 작성","supersedes":null}]`;
+[{"insight_text":"특정 도메인 활동이 실행 단계에 진입했다","category":"life_phase","confidence":0.9,"evidence_summary":"관련 문서 빈도 증가, 주요 문서 최종 수정, 도메인 Q&A 작성","supersedes":null}]`;
 
   try {
     // ask-claude.sh: TASK_ID PROMPT [ALLOWED_TOOLS] [TIMEOUT]

@@ -11,7 +11,7 @@
 # 원장: $HOME/jarvis/runtime/state/board-watchdog.jsonl (10MB rotate).
 #
 # 환경변수:
-#   BOARD_EXT_URL   외부 URL (필수). ~/.jarvis/.env 또는 shell profile에서 export.
+#   BOARD_EXT_URL   외부 URL (필수). ~/jarvis/runtime/.env 또는 shell profile에서 export.
 #   BOARD_TUNNEL_NAME cloudflared 터널 이름 (기본: jarvis-board)
 #
 # LaunchAgent ai.jarvis.board-watchdog (StartInterval 300)로 기동.
@@ -40,7 +40,7 @@ EXT_URL="${BOARD_EXT_URL:-}"
 TUNNEL_NAME="${BOARD_TUNNEL_NAME:-jarvis-board}"
 
 if [ -z "$EXT_URL" ]; then
-  echo "[ERROR] BOARD_EXT_URL 환경변수 미설정. ~/.jarvis/.env 에 추가하세요." >&2
+  echo "[ERROR] BOARD_EXT_URL 환경변수 미설정. ~/jarvis/runtime/.env 에 추가하세요." >&2
   exit 1
 fi
 TS="$(date +%Y-%m-%dT%H:%M:%S%z)"

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # symlink-topology-audit.sh
 #
-# ~/.jarvis 하위 토폴로지 정합성 감사 + 자동 복구.
+# ~/jarvis/runtime 하위 토폴로지 정합성 감사 + 자동 복구.
 #
 # Check:
 #   1. ~/jarvis/runtime/{infra,bin,lib,scripts} 가 심링크인가 (실제 디렉토리로 변했으면 파괴)
 #   2. 그 심링크들이 SSoT(~/jarvis/infra/*)를 가리키는가
-#   3. ~/.jarvis 하위 다른 절대 심링크가 SSoT 외부를 가리키는가
+#   3. ~/jarvis/runtime 하위 다른 절대 심링크가 SSoT 외부를 가리키는가
 #   4. .bak-* / .ghost-* 잔해
 #
 # Auto-recovery: Check 1·2 위반은 즉시 자동 복구 (파일 백업 후 심링크 재생성).
@@ -133,12 +133,13 @@ while IFS= read -r link; do
     *.bak*|*backup*) continue ;;
   esac
   target="$(readlink "$link" 2>/dev/null || true)"
-  [[ -z "$target" ]] && continue
-  [[ "$target" != /* ]] && continue
-  [[ "$target" == "${DOT_JARVIS}"/* ]] && continue
-  [[ "$target" == "${SSOT}"* ]] && continue
-  [[ "$target" == "${HOME}/jarvis"* ]] && continue
-  [[ "$target" == "${HOME}/jarvis-board"* ]] && continue
+  if [[ -z "$target" ]]; then continue; fi
+  if [[ "$target" != /* ]]; then continue; fi
+  if [[ "$target" == "${DOT_JARVIS}"/* ]]; then continue; fi
+  if [[ "$target" == "${SSOT}"* ]]; then continue; fi
+  if [[ "$target" == "${HOME}/jarvis"* ]]; then continue; fi
+  if [[ "$target" == "${HOME}/jarvis-board"* ]]; then continue; fi
+  if [[ "$target" == "${HOME}/.jarvis"* ]]; then continue; fi  # ~/.jarvis는 jarvis/runtime 심링크 — 허용
   emit "warn" "off-ssot-target" "$link" "target=${target}"
   alert_throttled "off-ssot-target" "$link" "⚠️ SSoT 외부 심링크" "target=${target}"
   violations=$((violations + 1))
@@ -166,7 +167,7 @@ if [[ $recoveries -gt 0 ]]; then
   emit "info" "audit-complete" "$DOT_JARVIS" "recoveries=${recoveries} violations=${violations}"
 fi
 if [[ $violations -eq 0 ]]; then
-  [[ $recoveries -eq 0 ]] && emit "info" "ok" "$DOT_JARVIS" "topology clean"
+  if [[ $recoveries -eq 0 ]]; then emit "info" "ok" "$DOT_JARVIS" "topology clean"; fi
   echo "✅ symlink topology audit: OK (${violations} un-recovered violations, ${recoveries} auto-recovered)"
   exit 0
 else

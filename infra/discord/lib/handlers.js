@@ -494,6 +494,85 @@ export async function handleMessage(message, state) {
   } catch {}
   const senderIsOwner = senderProfile?.type === 'owner' || senderProfile?.role === 'owner';
 
+  // ── 스킬 자동 트리거 감지 (2026-04-24, Phase 1) ──────────────────────────
+  // CLI UserPromptSubmit hook 방식을 Discord 표면에 이식. Jarvis 단일 뇌 완결.
+  // Owner 채널 + 자연어 키워드 매칭 시 즉시 runSkill → 응답 → return.
+  // Phase 3에서 /autoplan·/crisis·/deploy 에 버튼 결재 UX 추가 예정.
+  if (senderIsOwner && message.content) {
+    try {
+      const { detectSkillTrigger } = await import('./skill-trigger.js');
+      const trigger = detectSkillTrigger(message.content);
+      if (trigger) {
+        log('info', 'Skill trigger detected', {
+          userId: effectiveAuthor.id,
+          skill: trigger.skill,
+          confidence: trigger.confidence,
+          via: trigger.via,
+        });
+        const { runSkill } = await import('./skill-runner.js');
+        const skillStartTs = Date.now();
+        // 초기 placeholder (SDK query 30~60초 소요 — typing만으론 부족).
+        const placeholder = await message.reply(
+          `🔍 **\`/${trigger.skill}\`** 분석 중입니다... (0s)`
+        ).catch(() => null);
+        // typing indicator + placeholder 경과 시간 동시 갱신.
+        // Discord rate limit: same message edit은 3초 간격이 안전.
+        let typingInterval = setInterval(() => {
+          message.channel.sendTyping().catch(() => {});
+        }, 8000);
+        let elapsedInterval = null;
+        if (placeholder) {
+          elapsedInterval = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - skillStartTs) / 1000);
+            placeholder.edit({
+              content: `🔍 **\`/${trigger.skill}\`** 분석 중입니다... (${elapsed}s)`,
+            }).catch(() => {});
+          }, 10000);
+        }
+        message.channel.sendTyping().catch(() => {});
+        let result;
+        try {
+          result = await runSkill(trigger.skill, message.content, {
+            context: { channelId: message.channelId, userId: effectiveAuthor.id },
+          });
+        } finally {
+          clearInterval(typingInterval);
+          if (elapsedInterval) clearInterval(elapsedInterval);
+        }
+        const skillDurMs = Date.now() - skillStartTs;
+        log('info', 'Skill trigger completed', {
+          skill: trigger.skill,
+          durationMs: skillDurMs,
+          userId: effectiveAuthor.id,
+          textLength: result.text?.length ?? 0,
+          error: result.error ?? null,
+          via: result.via ?? 'api',
+        });
+        const header = `🎯 **스킬 \`/${trigger.skill}\`** (${trigger.via}, conf=${trigger.confidence})\n\n`;
+        const bodyBudget = 2000 - header.length - 20;
+        const reply = result.text.length > bodyBudget
+          ? result.text.slice(0, bodyBudget) + '\n\n…(잘림)'
+          : result.text;
+        // placeholder 있으면 edit, 없으면 새 reply
+        if (placeholder) {
+          await placeholder.edit({ content: header + reply }).catch(async () => {
+            await message.reply({ content: header + reply });
+          });
+        } else {
+          await message.reply({ content: header + reply });
+        }
+        processingMsgIds.delete(message.id);
+        return;
+      }
+    } catch (e) {
+      log('error', 'Skill trigger handler failed', {
+        error: e.message,
+        stack: e.stack?.slice(0, 300),
+      });
+      // fall-through: 기존 Claude 경로 진행 (트리거 실패가 전체 봇 차단 유발 방지)
+    }
+  }
+
   // !pair <code> — Owner 전용 커맨드 (debounce 우회, 즉시 처리)
   const pairMatch = message.content.match(/^!pair\s+([A-Z2-9]{6})\s*$/i);
   if (pairMatch) {
@@ -574,7 +653,13 @@ export async function handleMessage(message, state) {
   if (rememberMatch) {
     const fact = rememberMatch[1].trim();
     if (fact) {
-      userMemory.addFact(effectiveAuthor.id, fact, 'discord-remember-cmd');
+      userMemory.addFact(
+        effectiveAuthor.id,
+        fact,
+        'discord-remember-cmd',
+        'medium',
+        effectiveAuthor.displayName || effectiveAuthor.username || '',
+      );
       await message.reply(t('msg.remembered'));
       log('info', 'User memory saved via text command', { userId: effectiveAuthor.id, fact: fact.slice(0, 100) });
     }
@@ -968,7 +1053,7 @@ async function _processBatch(messages, { sessions, rateTracker, semaphore, activ
     }
     // Download text/document attachments from Discord CDN
     // 지원: txt, md, html, java, py, json, xml, csv, yaml, sh, sql, pdf 등
-    const MAX_TEXT_BYTES = 2_000_000; // 2MB 상한 (PDF 이력서 등 고려)
+    const MAX_TEXT_BYTES = 20_000_000; // [2026-04-24] 2MB → 20MB 상향. 2012KB PDF 거부 사고로 확대.
     for (const [, att] of message.attachments) {
       const isImg = att.contentType?.startsWith('image/') ||
         /\.(jpg|jpeg|png|gif|webp)$/i.test(att.name ?? '');
@@ -998,7 +1083,7 @@ async function _processBatch(messages, { sessions, rateTracker, semaphore, activ
           writeFileSync(pdfPath, buf);
           let usedFallback = false;
           try {
-            const { stdout } = await execFileAsync('/opt/homebrew/bin/pdftotext', [pdfPath, '-'], { maxBuffer: 2 * 1024 * 1024 });
+            const { stdout } = await execFileAsync('/opt/homebrew/bin/pdftotext', [pdfPath, '-'], { maxBuffer: 20 * 1024 * 1024 });
             const extracted = stdout.trim();
             if (extracted) {
               rmSync(pdfPath, { force: true });
@@ -1104,16 +1189,32 @@ ${extracted}
     lastQueryStore.set(sessionKey, originalPrompt);
     streamer = new StreamingMessage(thread, message, sessionKey, effectiveChannelId);
     streamer.setContext(getContextualThinking(userPrompt, imageAttachments.length > 0));
+    streamer.setChannelName(chName); // P0-3: 아티팩트 태그에 사용
+    // P3-3: A/B 실험 variant 결정 — userId 기반 deterministic
+    try { streamer.setUserId(effectiveAuthor?.id || message.author?.id || null); } catch { /* 비차단 */ }
+    // P2-1: 상시 Status bar 활성화 — 채널 기준 모델 자동 감지
+    if (process.env.STATUS_BAR_ENABLED !== '0') {
+      try {
+        const tier = _MODELS.channelOverrides?.[chName] || 'sonnet';
+        const modelLabel = { power: 'Opus 4.7', sonnet: 'Sonnet 4.6', fast: 'Haiku 4.5' }[tier] || tier;
+        streamer.setStatusMeta({ model: modelLabel, startedAt: Date.now(), turn: 0 });
+      } catch { /* status bar 실패는 비차단 */ }
+    }
+    // [2026-04-24 진단 로그] sendPlaceholder 호출 지점 1 (본문 스트림용)
+    log('info', '[PLACEHOLDER-ORIGIN]', { origin: 'handlers.js:1124 main-stream', streamerId: streamer._streamerId, msgId: message.id, threadId: thread.id });
     await streamer.sendPlaceholder();
     await streamer.updatePhase('🔍 요청 분석 중...');
 
     // Session summary pre-injection for resume safety
     // _continueHandled=true이면 이미 "계속" 블록에서 요약을 주입했으므로 중복 방지
     // sessionId 조건 제거: compact 직후 첫 턴(sessionId=null)에도 요약 주입
-    // jarvis-career 예외: save 쪽에서 저장 안 하므로 load 해도 빈 값이지만
+    // INTERVIEW_CHANNEL 예외: save 쪽에서 저장 안 하므로 load 해도 빈 값이지만
     // 혹시 과거 오염된 파일이 남아있을 수 있으므로 명시적으로 skip.
+    // INTERVIEW_CHANNEL: 면접 전형 질문 Hard 가드 대상 채널.
+    // env 미설정 시 기능 비활성(모든 채널에서 일반 응답) — 오너별 channel id 는 env 로만 관리.
+    const INTERVIEW_CHANNEL = process.env.INTERVIEW_CHANNEL || '';
     let _summaryInjected = false;
-    if (!_continueHandled && chName !== 'jarvis-career') {
+    if (!_continueHandled && chName !== INTERVIEW_CHANNEL) {
       const summary = loadSessionSummary(sessionKey);
       if (summary) {
         // tutoring 질문인데 요약에 잘못된 MCP/캘린더 내용이 있으면 주입하지 않음
@@ -1167,7 +1268,7 @@ ${extracted}
       }
     }
 
-    const MAX_CONTINUATIONS = 5;
+    const MAX_CONTINUATIONS = 10; // [2026-04-23] 5→10 상향. 이유: /verify 등 heavy skill 턴 소진으로 msg.truncated 반복 발생. 이론 상한 200×(1+10)=2200턴.
     let continuationCount = 0;
     let _autoResumeAttempts = 0; // 타임아웃 자동 재개 횟수 (최대 2회)
 
@@ -1288,7 +1389,10 @@ ${extracted}
             //      8회 제한은 정상 세션 잘라먹는 premature safeguard로 판명(2건 실제 trip).
             //      response-ledger.jsonl에 toolCount 계속 기록되어 사후 패턴 분석 가능.
             const display = getToolDisplay(se.content_block.name || '');
-            streamer.updateStatus(display.desc);
+            // P0-1: 통합 엔트리 — placeholder 모드면 updateStatus, 본문 스트리밍 중이면 prefix 라인
+            streamer.setToolStatus(display.desc);
+            // P2-1: 턴 카운터 증가 (상시 Status bar)
+            streamer.incTurn();
             // ② 세션 연속성: 툴 호출 이름 기록 (최대 20개, 민감 툴 제외)
             const toolName = se.content_block.name || '';
             if (toolName && !toolName.includes('secret') && completedTools.length < 20) {
@@ -1303,6 +1407,14 @@ ${extracted}
               appendFileSync(join(ledgerDir, 'tool-call-ledger.jsonl'), toolEntry);
             } catch { /* ledger 기록 실패는 비차단 */ }
             log('info', `Tool: ${se.content_block.name}`, { threadId: thread.id });
+          } else if (se.type === 'content_block_start' && se.content_block?.type === 'thinking') {
+            // P0-1: thinking 블록 시작 — 본문 스트리밍 중이면 "🧠 생각 정리 중" prefix
+            hasStreamEvents = true;
+            streamer.setThinking(true);
+          } else if (se.type === 'content_block_stop') {
+            // P0-1: tool/thinking 블록 종료 → prefix 제거
+            streamer.clearToolStatus();
+            streamer.setThinking(false);
           }
         } else if (event.type === 'assistant') {
           if (event.message?.content) {
@@ -1332,7 +1444,17 @@ ${extracted}
           });
 
           // Resume failure -> retry fresh (단, 이미 응답이 완료된 경우는 재시도 안 함)
+          // [2026-04-23 중복 송출 근본 수정] hasRealContent 가드 추가.
+          //   이전 로직: finalized=false면 무조건 retry → AUP refusal로 중간 끊긴 응답이 이미 송출됐는데도 retry
+          //   결과: 이전 부분 메시지 + 새 응답 → 주인님이 본 "청킹 후 새로 씀" 중복의 근본 원인.
+          //   수정: 이미 실제 콘텐츠가 송출된 경우 sessionId만 초기화하고 retry 차단.
           if (event.is_error && sid && !streamer.finalized) {
+            if (streamer.hasRealContent) {
+              log('warn', 'Resume failed but partial content already sent — skip retry to avoid duplicate', { sessionId: sid });
+              sessions.delete(sessionKey);
+              // retryNeeded = false 유지: 중복 송출 방지
+              break;
+            }
             log('warn', 'Resume failed, retrying fresh', { sessionId: sid });
             sessions.delete(sessionKey);
             retryNeeded = true;
@@ -1366,6 +1488,9 @@ ${extracted}
 
           const cost = event.cost_usd ?? null;
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          // P2-1: 최종 토큰을 Status bar 에 반영 (input+output 합산 = 실제 처리량)
+          const totalTok = (event.usage?.input_tokens ?? 0) + (event.usage?.output_tokens ?? 0);
+          if (totalTok > 0) streamer.setStatusMeta({ tokens: totalTok });
 
           // Phase 0 Sensor: 로컬 response-ledger (Langfuse 의존 제거)
           // feedback-score.jsonl과 traceId로 join 가능
@@ -1388,6 +1513,11 @@ ${extracted}
                   elapsed_s: parseFloat(elapsed),
                   input_tokens: event.usage?.input_tokens ?? 0,
                   output_tokens: event.usage?.output_tokens ?? 0,
+                  // 프롬프트 캐시 계측 (토큰 절감 효과 분석용)
+                  //   cache_read: 재사용된 prefix 토큰 (캐시 히트)
+                  //   cache_creation: 이번 턴에 새로 캐시에 기록한 토큰
+                  cache_read_input_tokens: event.usage?.cache_read_input_tokens ?? 0,
+                  cache_creation_input_tokens: event.usage?.cache_creation_input_tokens ?? 0,
                   stop_reason: event.stop_reason ?? null,
                   output_snippet: lastAssistantText.slice(0, 300),
                 }) + '\n'
@@ -1409,9 +1539,28 @@ ${extracted}
             : event.stop_reason === 'tool_use'               ? '🛠️ 도구 종료'
             : event.stop_reason ?? '-';
 
-          const footerParts = [`${elapsed}s`];
-          if (toolCount > 0) footerParts.push(`🛠${toolCount}`);
-          footerParts.push(`📊${Math.round(rateStatus.pct * 100)}%`);
+          // P2-1: Status bar 확장 — 모델/토큰/경과시간 포함 (Claude.ai 스타일)
+          const _modelShort = /power|opus-4-7|opus-4-6/.test(modelLabel) ? 'Opus'
+            : /opusplan/.test(modelLabel) ? 'Opus⁺'
+            : /sonnet/.test(modelLabel) ? 'Sonnet'
+            : /haiku/.test(modelLabel) ? 'Haiku'
+            : modelLabel.replace('claude-', '');
+          const _inTk = event.usage?.input_tokens ?? 0;
+          const _outTk = event.usage?.output_tokens ?? 0;
+          const _cacheRead = event.usage?.cache_read_input_tokens ?? 0;
+          const _cacheCreate = event.usage?.cache_creation_input_tokens ?? 0;
+          const _tokShort = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+          const footerParts = [`🤖 ${_modelShort}`, `⏱️ ${elapsed}s`];
+          if (_inTk + _outTk > 0) footerParts.push(`💭 ${_tokShort(_inTk)}↑ ${_tokShort(_outTk)}↓`);
+          // 캐시 히트율: cache_read / (cache_read + cache_create + input_tokens) — 전체 prompt 기준
+          // SDK는 cache hit 시 input_tokens 에서 재사용분을 제외한 신규분만 카운트
+          const _totalPromptTok = _inTk + _cacheRead + _cacheCreate;
+          if (_cacheRead > 0 && _totalPromptTok > 0) {
+            const _cachePct = Math.round((_cacheRead / _totalPromptTok) * 100);
+            footerParts.push(`🎯 ${_cachePct}% (${_tokShort(_cacheRead)})`);
+          }
+          if (toolCount > 0) footerParts.push(`🛠️ ${toolCount}`);
+          footerParts.push(`📊 ${Math.round(rateStatus.pct * 100)}%`);
           const stopPrefix = event.stop_reason !== 'end_turn' ? `${stopLabel} · ` : '';
 
           // 가족 채널에서는 stats 숨김
@@ -1435,9 +1584,9 @@ ${extracted}
 
           if (lastAssistantText.length > 20) {
             saveConversationTurn(originalPrompt, lastAssistantText, chName, effectiveAuthor.id);
-            // jarvis-career 는 세션 요약 저장 차단: 모의면접 시뮬 답변이 요약에 섞이면
+            // INTERVIEW_CHANNEL 은 세션 요약 저장 차단: 모의면접 시뮬 답변이 요약에 섞이면
             // 다음 턴에 pre-inject 되어 RAG·가드를 모두 우회하며 거짓 스토리 부활.
-            if (chName !== 'jarvis-career') {
+            if (chName !== INTERVIEW_CHANNEL) {
               saveSessionSummary(sessionKey, originalPrompt, lastAssistantText);
             }
             // 토큰 누적: result 이벤트의 usage.input_tokens (claude-runner.js에서 포워딩)
@@ -1469,18 +1618,23 @@ ${extracted}
         const pendingOauthRestart = join(_BOT_HOME, 'state', 'pending-oauth-restart');
         const pendingDeploymentRestart = join(_BOT_HOME, 'state', 'pending-deployment-restart');
 
+        // 2026-04-20: 5초 → 15초 연장
+        // 5초는 Discord API finalize 지연 + 새 프로세스 기동(약 5~8초) + orphan cleanup
+        // 이 겹쳐 race window를 만듦. 15초는 Discord client 모든 I/O 수렴 + 헬스체크
+        // 파일 flush 여유 확보.
+        const RESTART_DELAY_MS = 15000;
         if (existsSync(pendingOauthRestart)) {
           try { rmSync(pendingOauthRestart, { force: true }); } catch { /* ok */ }
-          log('info', 'Pending OAuth restart: last session completed, restarting in 5s');
-          setTimeout(() => process.kill(process.pid, 'SIGTERM'), 5000);
+          log('info', 'Pending OAuth restart: last session completed, restarting in 15s');
+          setTimeout(() => process.kill(process.pid, 'SIGTERM'), RESTART_DELAY_MS);
         } else if (existsSync(pendingDeploymentRestart)) {
           let reason = 'deployment';
           try {
             reason = readFileSync(pendingDeploymentRestart, 'utf-8').trim() || reason;
             rmSync(pendingDeploymentRestart, { force: true });
           } catch { /* ok */ }
-          log('info', 'Pending deployment restart: last session completed, restarting in 5s', { reason });
-          setTimeout(() => process.kill(process.pid, 'SIGTERM'), 5000);
+          log('info', 'Pending deployment restart: last session completed, restarting in 15s', { reason });
+          setTimeout(() => process.kill(process.pid, 'SIGTERM'), RESTART_DELAY_MS);
         }
       }
 
@@ -1492,15 +1646,29 @@ ${extracted}
         } else if (aborted && killReason !== 'restart') {
           // 타임아웃: 2회까지 자동 재개, 이후에만 사용자에게 알림
           _savePendingTask(sessionKey, originalPrompt, completedTools);
-          if (_autoResumeAttempts < 2) {
+          // [2026-04-23 중복 방지 #2] 부분 송출 후 auto-resume 차단
+          //   주인님 4회 반복 사고의 진짜 주범: AUP refusal → aborted=true → autoResumeNeeded=true
+          //   → while (autoResumeNeeded) 루프 반복 → 이미 송출된 내용을 처음부터 재작성
+          //   수정: hasRealContent면 재개 대신 truncate 안내 후 finalize.
+          if (!streamer.hasRealContent && _autoResumeAttempts < 2) {
             autoResumeNeeded = true;
             // finalize 스킵 — 외부 auto-resume 루프가 처리
           } else {
-            streamer.append('\n\n' + t('msg.timeout'));
+            // [2026-04-24] 오너 지시 — "응답이 중간에 끊겼습니다" 배너 제거.
+            // hasRealContent 일 땐 조용히 finalize. 빈 응답일 때만 timeout 안내 유지.
+            if (!streamer.hasRealContent) {
+              streamer.append('\n\n' + t('msg.timeout'));
+            }
             await streamer.finalize();
           }
         } else {
           if (streamer.hasRealContent && toolCount > 0) {
+            // [2026-04-23 관측 패치] L1585 경로 실제 발생 여부 추적
+            //   이 경로는 SDK for-await 가 result/error 없이 조용히 종료될 때 도달.
+            //   5차 감사관 응답 절단의 유력 후보. 로그 안 남기던 blind spot 이었음.
+            log('warn', 'Stream ended without result event — appending msg.truncated', {
+              threadId: thread.id, toolCount, contentLen: streamer.buffer?.length ?? 0,
+            });
             streamer.append('\n\n' + t('msg.truncated'));
           }
           await streamer.finalize();
@@ -1531,7 +1699,7 @@ ${extracted}
     userPrompt = await _preProcessorRegistry.run(userPrompt, preCtx);
 
     // ---------------------------------------------------------------------------
-    // Hard 가드 — jarvis-career 에서 면접 전형 질문이 왔는데 mock-interview 스킬이
+    // Hard 가드 — INTERVIEW_CHANNEL 에서 면접 전형 질문이 왔는데 mock-interview 스킬이
     // 명시적으로 켜지지 않은 경우, 모델이 창작하기 전에 고정 응답으로 short-circuit.
     // 이유: 프롬프트 지시("모의면접 쓸까요?"라고 먼저 확인)만으로는 LLM이 무시하고
     // 실증 없이 STAR 답변을 만들어낸다. 코드 레벨 가드가 유일한 해결책.
@@ -1576,7 +1744,7 @@ ${extracted}
     // 모의면접 범용 답변 가드 — 카드 하드코딩 없이 질문 유형별 원칙 + RAG 컨텍스트 주입.
     //
     // 구조:
-    // 1. 세션 시작 시 RAG로 정우님 커리어 전체를 pre-fetch (commands.js) → MOCK_CONTEXT
+    // 1. 세션 시작 시 RAG로 오너 프로필 전체를 pre-fetch (commands.js) → MOCK_CONTEXT
     // 2. 매 턴마다 질문 유형 감지 (취약성/자기소개/기술깊이/동기 등)
     // 3. 유형별 답변 원칙 + pre-fetch된 RAG 컨텍스트를 프롬프트에 주입
     // 4. Claude는 "재료(RAG) + 원칙(유형별 가이드)" 만으로 답변 생성 → 창작 차단
@@ -1602,7 +1770,7 @@ ${extracted}
       const { getMockContext } = await import('./slash-proxy.js');
       const mockCtx = getMockContext(effectiveChannelId, effectiveAuthor.id);
       const ragContextBlock = mockCtx?.context
-        ? `\n\n[정우님 실증 커리어 컨텍스트 — 답변의 재료는 여기에서만 가져와라]\n${mockCtx.context}\n`
+        ? `\n\n[오너 실증 프로필 컨텍스트 — 답변의 재료는 여기에서만 가져와라]\n${mockCtx.context}\n`
         : '';
       const companyBlock = mockCtx?.company ? `\n[회사: ${mockCtx.company}]` : '';
 
@@ -1744,7 +1912,7 @@ ${ragContextBlock}
 4. 구조: 상황 → 초기 가설 → 전환 계기 → 선택 근거(1~2개 비교 포함) → 수치 결과 → 조직 기여
 5. 마지막 한 줄: **강점 파고드는 꼬리질문**. 예: "선택지 비교는 어떤 기준으로 하셨나요?" / "500건 청킹 숫자 근거는?" / "이후 팀 표준으로 어떻게 확산시키셨나요?"
 
-**꼬리질문 대비 메모 (답변 후 정우님 외울 답안)**:
+**꼬리질문 대비 메모 (답변 후 오너 외울 답안)**:
 - Q "왜 REQUIRES_NEW·청킹 선택?"
   → "배치 분리는 스케줄 재편 부담, Pessimistic Lock은 경합 악화. REQUIRES_NEW는 자식 TX 독립으로 Lock 점유 시간 단축 + 롤백 전파 차단이 핵심. 500건은 테이블 평균 행 기준 단일 TX 1초 이내 임계점."
 - Q "왜 Adapter 선택?"
@@ -1753,7 +1921,7 @@ ${ragContextBlock}
 사용자가 카드 지정 안 하면 질문 취지에 가장 맞는 카드 선택. 바로 답변 생성 시작.`;
     }
 
-    if (chName === 'jarvis-career' && hasInterviewPattern && !hasSkillTrigger && !mockActive) {
+    if (chName === INTERVIEW_CHANNEL && hasInterviewPattern && !hasSkillTrigger && !mockActive) {
       const guardMsg = `🎤 면접 전형 질문 감지됨.\n\n이 채널은 일반 커리어 상담 채널이라 자동으로 1인칭 면접 답변을 만들지 않습니다 (할루시네이션 방지).\n\n**모의면접 답변 만들려면:**\n\`/mock-interview 삼성물산\` (슬래시 커맨드)\n또는 \`면접 연습해줘: 조직 실수 경험 질문\` (자연어)\n\n**그냥 질문 자체에 대한 상담이면:** "상담 모드로 답해줘"라고 덧붙여 주세요.`;
       await message.reply(guardMsg).catch(() => message.channel.send(guardMsg));
       await streamer.finalize();
@@ -2033,6 +2201,15 @@ export async function rerunQuery(channel, query, sessionKey, state, opts = {}) {
 
   const streamer = new StreamingMessage(channel, null, sessionKey, channel.id);
   streamer.setContext(opts.contextLabel ?? '🔄 재생성 중...');
+  streamer.setChannelName(channel?.name || null); // P0-3: artifact 업로드 시 채널 태그
+  // P3-3: 재생성에도 같은 userId 기반 variant 유지 (sessionKey에 userId 포함됨: ch-id:user-id)
+  try {
+    const parts = String(sessionKey || '').split(':');
+    const uid = parts.length >= 2 ? parts[parts.length - 1] : null;
+    if (uid) streamer.setUserId(uid);
+  } catch { /* 비차단 */ }
+  // [2026-04-24 진단 로그] sendPlaceholder 호출 지점 2 (슬래시/명령어 경로)
+  log('info', '[PLACEHOLDER-ORIGIN]', { origin: 'handlers.js:2130 slash-or-cmd', streamerId: streamer._streamerId, sessionKey });
   await streamer.sendPlaceholder();
 
   const abortController = new AbortController();
@@ -2083,7 +2260,15 @@ export async function rerunQuery(channel, query, sessionKey, state, opts = {}) {
         if (se.type === 'content_block_delta' && se.delta?.type === 'text_delta' && se.delta?.text) {
           streamer.append(se.delta.text);
         } else if (se.type === 'content_block_start' && se.content_block?.type === 'tool_use') {
-          streamer.updateStatus(`🔧 ${se.content_block.name || '도구 실행 중'}`);
+          // P0-1: updateStatus → setToolStatus 교체 (본문 스트리밍 중에도 prefix 표시)
+          streamer.setToolStatus(`🔧 ${se.content_block.name || '도구 실행 중'}`);
+        } else if (se.type === 'content_block_start' && se.content_block?.type === 'thinking') {
+          // P0-1: thinking 블록 시작 → "🧠 생각 정리 중" prefix
+          streamer.setThinking(true);
+        } else if (se.type === 'content_block_stop') {
+          // P0-1: tool/thinking 블록 종료 → prefix 제거
+          streamer.clearToolStatus();
+          streamer.setThinking(false);
         }
       }
     }

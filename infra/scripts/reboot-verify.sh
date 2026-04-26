@@ -57,10 +57,10 @@ echo ""
 
 # ③ 심링크 무결성 (타겟 비교)
 echo "═══ ③ 심링크 무결성 ═══"
-find ~/.jarvis -type l ! -path '*node_modules*' ! -path '*.bak*' 2>/dev/null | while read l; do
+find ~/jarvis/runtime -type l ! -path '*node_modules*' ! -path '*.bak*' 2>/dev/null | while read l; do
   printf "%s -> %s\n" "${l#$HOME/}" "$(readlink "$l")"
 done | sort > /tmp/symlinks.after
-broken=$(find ~/.jarvis -type l ! -path '*.bak*' -exec test ! -e {} \; -print 2>/dev/null | head -5)
+broken=$(find ~/jarvis/runtime -type l ! -path '*.bak*' -exec test ! -e {} \; -print 2>/dev/null | head -5)
 if [[ -n "$broken" ]]; then
   echo "❌ 깨진 심링크:"
   echo "$broken" | sed 's/^/    /'

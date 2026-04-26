@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # 조기 종료 진단: set -e 이전에 invocation 기록 (exit 0 + 빈 출력 재발 시 추적용)
 # task-runner.jsonl에 "start" 항목이 없는데 이 파일에 기록이 있으면 set -e 트리거 확인 필요
+
+# --- HOME 보증 (cron에서 HOME 누락 가능성) ---
+export HOME="${HOME:-$(eval echo ~$(whoami))}"
+
 _EARLY_LOG="${BOT_HOME:-${HOME}/jarvis/runtime}/logs/ask-claude-invocations.log"
 printf '[%s] PID=%d TASK=%s\n' "$(date -u +%FT%TZ 2>/dev/null || echo unknown)" "$$" "${1:-?}" >> "$_EARLY_LOG" 2>/dev/null || true
 unset _EARLY_LOG
+# --- PATH 강화 (cron 환경에서 경로 누락 방지) ---
+export PATH="${PATH:-/usr/bin:/bin}:/opt/homebrew/bin:/usr/local/bin:${HOME}/.local/bin"
 source "${JARVIS_HOME:-${BOT_HOME:-${HOME}/jarvis/runtime}}/lib/compat.sh" 2>/dev/null || true
 set -euo pipefail
 
@@ -12,6 +18,14 @@ set -euo pipefail
 
 BOT_HOME="${BOT_HOME:-${HOME}/jarvis/runtime}"
 LOG_FILE="${BOT_HOME}/logs/task-runner.jsonl"
+
+# --- Batch mode (토큰 절감) ---
+# ask-claude.sh는 크론/배치 태스크 전용 진입점이므로 기본값 1.
+# llm-gateway.sh의 _llm_claude_cli가 이 값을 보고 claude -p에 다음 플래그 추가:
+#   --disable-slash-commands, --no-session-persistence,
+#   --exclude-dynamic-system-prompt-sections, --setting-sources ""
+# 호출자가 대화형 용도로 전환하고 싶으면 JARVIS_BATCH_MODE=0 명시 export.
+export JARVIS_BATCH_MODE="${JARVIS_BATCH_MODE:-1}"
 
 # --- Arguments ---
 TASK_ID="${1:?Usage: ask-claude.sh TASK_ID PROMPT [ALLOWED_TOOLS] [TIMEOUT] [MAX_BUDGET]}"

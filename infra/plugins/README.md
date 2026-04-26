@@ -42,8 +42,8 @@ Optional fields: `version`, `description`, `model`, `discordChannel`, `retry`,
 
 ```bash
 # From git
-git clone https://github.com/user/jarvis-plugin-name ~/.jarvis/plugins/plugin-name
+git clone https://github.com/user/jarvis-plugin-name ~/jarvis/runtime/plugins/plugin-name
 
 # Then reload
-~/.jarvis/bin/plugin-loader.sh
+~/jarvis/runtime/bin/plugin-loader.sh
 ```

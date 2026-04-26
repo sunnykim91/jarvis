@@ -10,11 +10,31 @@
 import * as lancedb from '@lancedb/lancedb';
 import * as arrow from 'apache-arrow';
 import { readFile, readdir, stat, readFile as readFileAsync } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join, extname, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { appendFileSync, mkdirSync, rmdirSync, statSync } from 'node:fs';
+import { appendFileSync, mkdirSync, rmdirSync, statSync, readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { LANCEDB_PATH, RAG_LOCK_DIR, INFRA_HOME, ENTITY_GRAPH_PATH, ensureDirs } from './paths.mjs';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Owner companies — private/config/owner-companies.txt 에서 로드
+// 공개 저장소에는 일반 플랫폼명만 두고, 오너 개인 회사명은 gitignored 파일로 분리.
+// 형식: pipe(|) 구분 문자열. 예: "Company-A|Company-B|Company-C"
+// 파일 없으면 빈 배열 → 공개 OSS 사용자는 자체 회사명 설정 가능.
+// ─────────────────────────────────────────────────────────────────────────────
+const __rag_engine_dir = dirname(fileURLToPath(import.meta.url));
+const OWNER_COMPANIES_PATH = join(__rag_engine_dir, '..', '..', 'private', 'config', 'owner-companies.txt');
+function loadOwnerCompanies() {
+  try {
+    if (!existsSync(OWNER_COMPANIES_PATH)) return [];
+    const content = readFileSync(OWNER_COMPANIES_PATH, 'utf-8').trim();
+    return content.split('|').map(s => s.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+const OWNER_COMPANIES = loadOwnerCompanies();
 
 const EMBEDDING_MODEL = 'snowflake-arctic-embed2';
 const EMBEDDING_DIM = 1024;
@@ -484,10 +504,12 @@ export class RAGEngine {
       'Anthropic', 'OpenAI', 'Claude', 'GPT', 'LLM', 'RAG',
       'WebFlux', 'Reactor', 'RxJava',
     ];
+    // NLP 엔티티 추출용 회사명 사전.
+    // 공개 저장소엔 일반 플랫폼명만 유지. 오너 개인 근무 이력/관심 회사는
+    // private/config/owner-companies.txt 로 분리 (gitignored).
     const COMPANY_TERMS = [
-      '네이버', '쿠팡', '삼성SDS', '삼성',
-      'Company-A', 'SK', 'Company-B', 'Company-B', '토스', 'Toss', 'LINE', '배달의민족', '당근마켓',
       'Discord', 'Slack', 'Teams',
+      ...OWNER_COMPANIES,
     ];
 
     // --- Topic 매핑 (키워드 히트 수로 스코어링) ---
@@ -547,38 +569,93 @@ export class RAGEngine {
   // --- Embedding ---
 
   async embed(texts) {
-    const results = [];
+    // Batches를 병렬로 Ollama에 전송 — 큰 파일(150청크 이상)에서만 효과 발생.
+    // Ollama 서버의 NUM_PARALLEL(기본 auto=4)을 활용해 동시 embedding 처리.
+    // 2026-04-20: 직렬 → 병렬 (CONCURRENCY=2) 전환. 파일 단위 병렬화와 조합됨.
+    const batches = [];
     for (let i = 0; i < texts.length; i += EMBED_BATCH_SIZE) {
-      const batch = texts.slice(i, i + EMBED_BATCH_SIZE);
-      const MAX_RETRIES = 2;
-      let lastErr;
-      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        try {
-          const res = await fetch(OLLAMA_EMBED_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: EMBEDDING_MODEL, input: batch }),
-            signal: AbortSignal.timeout(30_000),  // 30s timeout — prevents hang if Ollama stalls
-          });
-          if (!res.ok) {
-            throw new Error(`Ollama embed HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
-          }
-          const data = await res.json();
-          results.push(...data.embeddings);
-          break;
-        } catch (err) {
-          lastErr = err;
-          const msg = err.message || '';
-          if ((msg.includes('timed out') || msg.includes('timeout') || msg.includes('ECONNREFUSED')) && attempt < MAX_RETRIES) {
-            await new Promise(r => setTimeout(r, 3_000));
-            continue;
-          }
-          throw err;
-        }
-      }
-      if (lastErr && results.length < i + batch.length) throw lastErr;
+      batches.push(texts.slice(i, i + EMBED_BATCH_SIZE));
     }
-    return results;
+    if (batches.length === 0) return [];
+    if (batches.length === 1) {
+      // 단일 batch는 병렬화 의미 없음 — 기존 경로로 처리
+      return this._embedOneBatch(batches[0]);
+    }
+
+    const CONCURRENCY = Math.min(
+      Number(process.env.RAG_EMBED_BATCH_CONCURRENCY) || 2,
+      batches.length,
+    );
+    const results = new Array(batches.length);
+    let next = 0;
+    const workers = Array.from({ length: CONCURRENCY }, () => (async () => {
+      while (true) {
+        const idx = next++;
+        if (idx >= batches.length) return;
+        results[idx] = await this._embedOneBatch(batches[idx]);
+      }
+    })());
+    await Promise.all(workers);
+    return results.flat();
+  }
+
+  /**
+   * Single batch embedding with retry (ECONNREFUSED/timeout만 재시도).
+   * @param {string[]} batch - 최대 EMBED_BATCH_SIZE 텍스트
+   * @returns {Promise<number[][]>} embeddings 배열
+   */
+  async _embedOneBatch(batch) {
+    // Circuit breaker: 연속 실패 5회 → 30분 OPEN (추가 호출 즉시 차단, BM25 fallback 활성).
+    // 복구: 30분 후 HALF-OPEN 1회 시도 → 성공 시 CLOSED, 실패 시 재 OPEN.
+    if (!this._embedCircuit) this._embedCircuit = { state: 'closed', failCount: 0, openedAt: 0 };
+    const EMBED_FAIL_THRESHOLD = 5;
+    const EMBED_OPEN_DURATION_MS = 30 * 60 * 1000;
+    const now = Date.now();
+    if (this._embedCircuit.state === 'open') {
+      if (now - this._embedCircuit.openedAt < EMBED_OPEN_DURATION_MS) {
+        const remainMin = Math.max(1, Math.round((EMBED_OPEN_DURATION_MS - (now - this._embedCircuit.openedAt)) / 60000));
+        throw new Error(`Embedding circuit OPEN (${this._embedCircuit.failCount} consecutive failures, cooling down ~${remainMin}min)`);
+      }
+      this._embedCircuit.state = 'half-open';
+      console.warn('[rag] Embedding circuit HALF-OPEN — trial request');
+    }
+
+    const MAX_RETRIES = 2;
+    let lastErr;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const res = await fetch(OLLAMA_EMBED_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: EMBEDDING_MODEL, input: batch }),
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!res.ok) {
+          throw new Error(`Ollama embed HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+        }
+        const data = await res.json();
+        if (this._embedCircuit.state !== 'closed') {
+          console.warn(`[rag] Embedding circuit CLOSED — recovered after ${this._embedCircuit.failCount} failures`);
+          this._embedCircuit = { state: 'closed', failCount: 0, openedAt: 0 };
+        }
+        return data.embeddings;
+      } catch (err) {
+        lastErr = err;
+        const msg = err.message || '';
+        if ((msg.includes('timed out') || msg.includes('timeout') || msg.includes('ECONNREFUSED')) && attempt < MAX_RETRIES) {
+          await new Promise(r => setTimeout(r, 3_000));
+          continue;
+        }
+        this._embedCircuit.failCount++;
+        if (this._embedCircuit.state === 'half-open' || this._embedCircuit.failCount >= EMBED_FAIL_THRESHOLD) {
+          this._embedCircuit.state = 'open';
+          this._embedCircuit.openedAt = Date.now();
+          console.warn(`[rag] Embedding circuit OPEN — ${this._embedCircuit.failCount} consecutive failures, cooling 30min`);
+        }
+        throw err;
+      }
+    }
+    throw lastErr;
   }
 
   async _alertEmbeddingFailure(status, message) {
@@ -848,7 +925,7 @@ export class RAGEngine {
 
   /**
    * 한국어 조사/어미를 제거한 BM25 검색용 정규화 쿼리 생성.
-   * LanceDB FTS는 공백 단위 토크나이징 → "삿포로에서" ≠ "삿포로" 미매치 방지.
+   * LanceDB FTS는 공백 단위 토크나이징 → "destination-b에서" ≠ "destination-b" 미매치 방지.
    */
   _normalizeKoreanQuery(query) {
     // 명사 뒤에 오는 격조사/보조사만 제거 (공백 단위 BM25 토크나이저 보완)
@@ -910,7 +987,9 @@ export class RAGEngine {
     } else if (domain === 'board') {
       domainWhereClause = "source LIKE '%board%'";
     } else if (domain === 'rag') {
-      domainWhereClause = "source LIKE '%/.jarvis/rag%'";
+      // dual-pattern: 호환 심링크(~/.jarvis) 만료(2026-10-17) 후에도
+      // 기존 인덱싱된 24,448개 문서가 검색되도록 옛/새 경로 둘 다 매칭. # ALLOW-DOTJARVIS
+      domainWhereClause = "(source LIKE '%/.jarvis/rag%' OR source LIKE '%/jarvis/runtime/rag%')";
     } else if (domain === 'code') {
       domainWhereClause = "chunk_type LIKE 'code-%'";
     }
@@ -1346,6 +1425,15 @@ export class RAGEngine {
           break; // 성공
         } catch (delErr) {
           attempt++;
+          // 서킷브레이커: deletion manifest 파일 부재는 refreshTable로 복구 불가
+          // (삭제할 청크 자체가 없거나, 테이블이 격리·리빌드된 상태). 즉시 noop.
+          const isMissingDeletionFile = delErr.message?.includes('Not found:') &&
+            delErr.message?.includes('_deletions/') &&
+            delErr.message?.includes('.bi');
+          if (isMissingDeletionFile) {
+            console.warn(`[rag-engine] deleteBySource circuit-break: missing deletion file for ${source.split('/').pop()} — noop`);
+            return;
+          }
           const isStaleManifest = delErr.message?.includes('Not found:') &&
             delErr.message?.includes('.lance');
           if (isStaleManifest && attempt < 3) {

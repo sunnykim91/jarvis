@@ -23,8 +23,8 @@
 rules:
   - id: korean-owner-name
     severity: high
-    pattern: "이정우"
-    description: "Owner 실명 — process.env.OWNER_NAME 사용"
+    pattern: "이정우|정우님"
+    description: "Owner 실명·별칭 — process.env.OWNER_NAME 사용"
     context_allow:
       - "process\\.env\\.OWNER_NAME"
       - "OWNER_NAME=이정우"
@@ -34,8 +34,10 @@ rules:
 
   - id: company-names
     severity: high
-    pattern: "SK D&D|JANDI|카카오페이"
-    description: "근무/지원 회사 — OWNER_COMPANIES 사용"
+    # 패턴은 private/config/owner-companies.txt 에서 로드 (gitignored).
+    # 파일 부재 시 규칙 자동 skip — OSS 배포판은 본인 회사 목록만 추가하면 활성화.
+    pattern_file: "private/config/owner-companies.txt"
+    description: "근무/지원 회사 — OWNER_COMPANIES env 또는 private/config/owner-companies.txt 로 관리"
     context_allow:
       - "process\\.env\\.OWNER_COMPANIES"
     allow_paths:
@@ -59,13 +61,12 @@ rules:
   - id: absolute-home-path
     severity: medium
     pattern: "/Users/ramsbaby/"
-    description: "하드코딩 절대경로 — $HOME 사용. 문서/마이그레이션 스크립트는 샘플 목적 허용."
-    # TODO(privacy): .mcp.json 분리 — OSS 공개 시 .mcp.json.example 로 바꾸고 실제 경로는 gitignore.
-    # 지금은 기존 사용자 워크플로우 유지 위해 임시 허용.
+    description: "하드코딩 절대경로 — $HOME 사용. LaunchAgent plist는 launchd가 절대경로 요구 → 허용."
     allow_paths:
       - "infra/scripts/*.sh"
       - "infra/scripts/*.mjs"
       - "infra/launchd/*.plist"
+      - "infra/config/*.plist"
       - "infra/docs/**/*.md"
       - "**/*.example.*"
       - ".mcp.json"
@@ -81,17 +82,39 @@ rules:
   - id: github-username
     severity: low
     pattern: "Ramsbaby|ramsbaby"
-    description: "GitHub username — plist/스크립트 경로·LICENSE 등 비기능 노출만 허용."
+    description: "GitHub username — plist/스크립트 경로·LICENSE·GitHub API 호출 스크립트 허용."
     allow_paths:
       - "*.md"
       - "*.toml"
       - "LICENSE"
       - "infra/launchd/*.plist"
+      - "infra/config/*.plist"
       - "infra/scripts/*.sh"
       - "infra/scripts/*.mjs"
+      - "infra/bin/*.sh"
+      - "infra/bin/*.mjs"
+      - "infra/discord/lib/*.js"
       - ".github/**"
       - ".mcp.json"
       - ".privacy-blocklist.yml"
+
+  - id: career-narratives
+    severity: medium
+    # 이직/면접/이력서/취업/연봉 같은 오너 개인 상태 서사가 공개 노출되는 것을 차단.
+    # 단어 경계 없이 부분 매칭이라 기술 용어(cron job 등)에 걸릴 수 있으나,
+    # allow_paths 로 기술 문서는 화이트리스트 — privacy 우선.
+    pattern: "이직\\s*준비|면접\\s*준비|interview\\s*prep|career\\s*topic|이력서\\s*수정|취업\\s*준비|오퍼\\s*수령|jarvis-career"
+    description: "오너 개인 활동 서사 — 일반화된 표현(topic X, domain Y 등)으로 대체"
+    context_allow:
+      - "process\\.env\\.INTERVIEW_CHANNEL"
+      - "process\\.env\\.CAREER_DOMAIN_CHANNEL"
+    allow_paths:
+      - ".privacy-blocklist.yml"
+      - "private/**"
+      - "runtime/**"
+      - ".github/**"
+      - "infra/launchd/*.plist"
+      - "infra/config/*.plist"
 
 global_ignore:
   - ".git/**"

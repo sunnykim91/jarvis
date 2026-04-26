@@ -24,7 +24,7 @@ addTask({
   depends: [],            // array of task IDs that must be done first
   name: 'Task display name',
   prompt: 'What claude should do',
-  completionCheck: 'bash -n ~/.jarvis/scripts/my-script.sh',
+  completionCheck: 'bash -n ~/jarvis/runtime/scripts/my-script.sh',
   maxBudget: '0.30',      // USD
   timeout: 180,           // seconds
   allowedTools: 'Bash,Read,Write',
@@ -152,7 +152,7 @@ Reads from and writes to `config/secrets/calendar.json`. Called automatically by
 Main cron dispatcher.
 
 ```bash
-BOT_HOME=~/.jarvis bash bin/bot-cron.sh <task-id>
+BOT_HOME=~/jarvis/runtime bash bin/bot-cron.sh <task-id>
 ```
 
 Reads task config from `config/tasks.json`, routes to appropriate script, handles circuit breaker, posts results to Discord.

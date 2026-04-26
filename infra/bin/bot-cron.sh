@@ -16,6 +16,11 @@ unset ANTHROPIC_API_KEY 2>/dev/null || true
 # Prevent nested claude detection
 unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 
+# Batch mode: 크론 태스크는 기본적으로 토큰 절감 플래그 활성화
+# (llm-gateway.sh가 감지하여 --disable-slash-commands, --no-session-persistence,
+#  --exclude-dynamic-system-prompt-sections, --setting-sources "" 를 claude -p에 추가)
+export JARVIS_BATCH_MODE="${JARVIS_BATCH_MODE:-1}"
+
 BOT_HOME="${BOT_HOME:-${HOME}/jarvis/runtime}"
 INFRA_DIR="${HOME}/jarvis/infra"
 NODE_SQLITE="node --experimental-sqlite --no-warnings"
@@ -24,7 +29,10 @@ FSM_STORE="${BOT_HOME}/lib/task-store.mjs"
 # --- FSM 헬퍼 ---
 _fsm_ensure() {
     # cron 태스크를 FSM DB에 등록/리셋 (failed/done → queued 재시작)
-    ${NODE_SQLITE} "${FSM_STORE}" ensure "$1" "$1" "bot-cron" >/dev/null 2>&1 || true
+    # dev-queue v2 (2026-04-22): batch_id="bot-cron-<YYYYMMDD>" — 같은 날 돌린 cron 태스크 박스
+    local _batch
+    _batch="bot-cron-$(date +%Y%m%d)"
+    ${NODE_SQLITE} "${FSM_STORE}" ensure "$1" "$1" "bot-cron" "" "" "$_batch" >/dev/null 2>&1 || true
 }
 _fsm_transition() {
     local task_id="$1" to_status="$2" extra="${3:-{}}"
@@ -168,7 +176,7 @@ fi
 # 별칭 매핑: portfolio → state/portfolio.json, goals → config/goals.json
 _INJECT_PREFIX=""
 while IFS= read -r _alias; do
-    [[ -z "$_alias" ]] && continue
+    if [[ -z "$_alias" ]]; then continue; fi
     case "$_alias" in
         portfolio) _inject_path="${BOT_HOME}/state/portfolio.json" ;;
         goals)     _inject_path="${BOT_HOME}/config/goals.json" ;;
@@ -248,7 +256,7 @@ if [[ -n "$_cur_md5" ]]; then
 import json, os
 f = '$_PROMPT_HASH_FILE'
 d = json.load(open(f)) if os.path.exists(f) else {}
-print(d.get('$TASK_ID', ''))
+print(d.get(\"$TASK_ID\", ''))
 " 2>/dev/null || echo "")
     if [[ -n "$_prev_md5" && "$_prev_md5" != "$_cur_md5" ]]; then
         log "REGRESSION: 프롬프트 변경 감지 (${TASK_ID}) — 다음 3회 실행 태깅 시작"
@@ -558,6 +566,8 @@ if [[ $EXIT_CODE -ne 0 ]]; then
 fi
 
 _PHASE="post-execute"
+# Store duration before unsetting (used in file routing)
+_TASK_DURATION="${_ACTUAL_DURATION}"
 # Continue Sites: 복구 단계에서 성공한 경우 로그 보강
 if [[ "${JARVIS_RECOVERY_STAGE:-1}" -gt 1 ]]; then
     log "SUCCESS (duration=${_ACTUAL_DURATION}s, recovered at stage ${JARVIS_RECOVERY_STAGE})"
@@ -658,7 +668,19 @@ for mode in $OUTPUT_MODES; do
             "$BOT_HOME/bin/route-result.sh" ntfy "$TASK_ID" "$RESULT" || log "WARN: ntfy routing failed"
             ;;
         file)
-            # Already saved by ask-claude.sh, no-op
+            # Save result to task-specific log file
+            _log_file="${BOT_HOME}/logs/${TASK_ID}.log"
+            mkdir -p "$(dirname "$_log_file")"
+            {
+                echo "===== Task: $TASK_ID ====="
+                echo "Timestamp: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+                echo "Exit Code: $EXIT_CODE"
+                echo "Duration: ${_TASK_DURATION}s"
+                echo "---"
+                echo "$RESULT"
+            } >> "$_log_file"
+            log "Result saved to: $_log_file"
+            unset _log_file
             ;;
     esac
 done

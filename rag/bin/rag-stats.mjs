@@ -5,7 +5,7 @@
  * openReadOnly()만 사용하므로 DB를 절대 생성하지 않음.
  * 상태 확인은 반드시 이 스크립트를 사용할 것 (RAGEngine().init() 직접 호출 금지).
  *
- * 사용법: node ~/.jarvis/bin/rag-stats.mjs [--json]
+ * 사용법: node ~/jarvis/runtime/bin/rag-stats.mjs [--json]
  */
 
 import { join } from 'node:path';

@@ -5,13 +5,13 @@
 
 ## 수집 항목
 1. CEO와 팀장들의 보고 내용 (SendMessage로 수신)
-2. `ls -t ~/.jarvis/results/ | head -10` — 오늘 생성된 결과물 목록
-3. `ls ~/.jarvis/rag/teams/shared-inbox/` — 미처리 팀 간 메시지
+2. `ls -t ~/jarvis/runtime/results/ | head -10` — 오늘 생성된 결과물 목록
+3. `ls ~/jarvis/runtime/rag/teams/shared-inbox/` — 미처리 팀 간 메시지
 
 ## 산출물 (Write 도구 사용)
 
 ### 1. 회의록
-`~/.jarvis/state/board-minutes/$(date +%F).md` 에 저장:
+`~/jarvis/runtime/state/board-minutes/$(date +%F).md` 에 저장:
 ```markdown
 # Board Meeting — YYYY-MM-DD
 
@@ -35,7 +35,7 @@
 ```
 
 ### 2. 의사결정 감사 로그
-CEO 결정사항을 `~/.jarvis/state/decisions/$(date +%F).jsonl`에 append:
+CEO 결정사항을 `~/jarvis/runtime/state/decisions/$(date +%F).jsonl`에 append:
 ```json
 {"ts":"ISO8601","decision":"결정 내용","rationale":"근거","owner":"담당팀","okr":"관련 KR ID","status":"pending|confirmed"}
 ```
@@ -43,7 +43,7 @@ CEO 결정사항을 `~/.jarvis/state/decisions/$(date +%F).jsonl`에 append:
 ## 보고 (CEO에게 SendMessage)
 ```
 [기록 완료]
-회의록: ~/.jarvis/state/board-minutes/YYYY-MM-DD.md
+회의록: ~/jarvis/runtime/state/board-minutes/YYYY-MM-DD.md
 결정사항: N건 기록
 미처리 인박스: N건
 ```

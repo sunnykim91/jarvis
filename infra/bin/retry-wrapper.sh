@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# --- HOME 보증 (cron에서 HOME 누락 가능성) ---
+export HOME="${HOME:-$(eval echo ~$(whoami))}"
+
+# --- PATH 강화 (cron 환경에서 경로 누락 방지) ---
+export PATH="${PATH:-/usr/bin:/bin}:/opt/homebrew/bin:/usr/local/bin:${HOME}/.local/bin"
 set -euo pipefail
 
 # retry-wrapper.sh - Retry wrapper with exponential backoff for ask-claude.sh
@@ -13,7 +18,7 @@ RETRY_LOG="${BOT_HOME}/logs/retry.jsonl"
 
 # Load .env for BOARD_URL and AGENT_API_KEY
 if [[ -z "${BOARD_URL:-}" && -f "${JARVIS_HOME:-${HOME}/jarvis/runtime}/.env" ]]; then
-    set -a; source "${JARVIS_HOME:-${HOME}/jarvis/runtime}/.env"; set +a
+    set -a; source "${JARVIS_HOME:-${HOME}/jarvis/runtime}/.env" 2>/dev/null || true; set +a
 fi
 
 # --- Arguments ---

@@ -1,24 +1,24 @@
 {
-  "generatedAt": "2026-04-17T21:17:05.857Z",
+  "generatedAt": "2026-04-22T14:55:03.515Z",
   "source": "~/jarvis/runtime/config/tasks.json",
-  "totalTasks": 94,
+  "totalTasks": 109,
   "teamDistribution": {
     "standup": 1,
     "president": 13,
-    "infra-lead": 16,
+    "infra-lead": 17,
     "finance": 8,
     "trend-lead": 8,
-    "record-lead": 4,
+    "record-lead": 6,
     "library": 1,
     "growth-lead": 4,
     "brand-lead": 4,
-    "audit-lead": 17,
+    "audit-lead": 19,
     "secretary": 10,
-    "uncategorized": 8
+    "uncategorized": 18
   },
   "typeDistribution": {
-    "prompt": 36,
-    "script": 58
+    "prompt": 37,
+    "script": 72
   },
   "groups": [
     {
@@ -30,8 +30,8 @@
         {
           "id": "morning-standup",
           "name": "모닝 스탠드업",
-          "schedule": "10 6 * * *",
-          "scheduleHuman": "매일 06:10",
+          "schedule": "30 7 * * *",
+          "scheduleHuman": "매일 07:30",
           "type": "prompt",
           "handler": "ask-claude.sh (LLM)",
           "team": {
@@ -114,7 +114,7 @@
           "model": null,
           "priority": "critical",
           "maxBudget": "1.20",
-          "disabled": true,
+          "disabled": false,
           "description": null,
           "logs": {
             "stdout": {
@@ -146,7 +146,7 @@
           "model": null,
           "priority": "critical",
           "maxBudget": "1.20",
-          "disabled": true,
+          "disabled": false,
           "description": null,
           "logs": {
             "stdout": {
@@ -812,6 +812,38 @@
           }
         },
         {
+          "id": "mistake-circuit-healthcheck",
+          "name": "오답노트 추출기 회로 차단 감지",
+          "schedule": "0 * * * *",
+          "scheduleHuman": "매일 *:0",
+          "type": "script",
+          "handler": "mistake-circuit-healthcheck.mjs",
+          "team": {
+            "id": "infra-lead",
+            "name": "SRE실 (인프라·신뢰성)"
+          },
+          "discordChannel": null,
+          "model": null,
+          "priority": "system",
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": "매시간 정각. mistake-extractor의 circuit-state.json을 읽어 OPEN 상태이면 Discord jarvis-system 채널에 알람 (6h rate limit). 2026-04-22 18시간 마비 사고 재발 방지용.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/mistake-circuit-healthcheck.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/mistake-circuit-healthcheck-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-mistake-circuit-healthcheck-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
           "id": "rag-health",
           "name": "RAG 건강 체크",
           "schedule": "0 3 * * *",
@@ -1090,7 +1122,7 @@
           "model": "claude-sonnet-4-6",
           "priority": "daily",
           "maxBudget": "1.50",
-          "disabled": false,
+          "disabled": true,
           "description": "평일 08:00 재무/시장 모니터링. finance/team.yml 기반으로 실행.",
           "logs": {
             "stdout": {
@@ -1223,11 +1255,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/tqqq-monitor.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/tqqq-monitor-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-tqqq-monitor-*.log",
@@ -1327,11 +1359,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/geeknews-bench-crawl.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/geeknews-bench-crawl-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-geeknews-bench-crawl-*.log",
@@ -1359,11 +1391,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/geeknews-bench-report.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/geeknews-bench-report-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-geeknews-bench-report-*.log",
@@ -1386,7 +1418,7 @@
           "model": "claude-haiku-4-5-20251001",
           "priority": "daily",
           "maxBudget": "0.50",
-          "disabled": false,
+          "disabled": true,
           "description": null,
           "logs": {
             "stdout": {
@@ -1540,6 +1572,38 @@
       },
       "tasks": [
         {
+          "id": "rag-index-consume",
+          "name": "RAG 인덱싱 큐 소비자",
+          "schedule": "30 * * * *",
+          "scheduleHuman": "매일 *:30",
+          "type": "script",
+          "handler": "rag-index-cron.sh",
+          "team": {
+            "id": "record-lead",
+            "name": "데이터실 (메모리·RAG 백엔드)"
+          },
+          "discordChannel": null,
+          "model": null,
+          "priority": "system",
+          "maxBudget": "0.10",
+          "disabled": false,
+          "description": "매시간 30분. rag-write-queue.jsonl 적재된 인덱싱 큐 소비. 2026-04-22 트리거 부재 사고(learned-mistakes 인덱싱 0건) 재발 방지용.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/rag-index-consume.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/rag-index-consume-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-rag-index-consume-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
           "id": "record-daily",
           "name": "기록팀 일일 마감 (Record)",
           "schedule": "30 22 * * *",
@@ -1599,6 +1663,38 @@
             },
             "claudeStderr": {
               "pattern": "claude-stderr-session-sync-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
+          "id": "user-memory-monitor",
+          "name": "사용자 메모리 오염 감시",
+          "schedule": "0 8 * * *",
+          "scheduleHuman": "매일 08:00",
+          "type": "script",
+          "handler": "user-memory-monitor.sh",
+          "team": {
+            "id": "record-lead",
+            "name": "데이터실 (메모리·RAG 백엔드)"
+          },
+          "discordChannel": "jarvis-system",
+          "model": null,
+          "priority": "daily",
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": "매일 08:00 KST. 전체 사용자(정우·보람 등) user-memory facts 총량·카테고리별 임계치 감시. boram-memory-monitor 통합 대체.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/user-memory-monitor.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/user-memory-monitor-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-user-memory-monitor-*.log",
               "exists": false
             }
           }
@@ -1712,7 +1808,7 @@
     {
       "team": {
         "id": "growth-lead",
-        "name": "인재개발실 (커리어·학습)"
+        "name": "인재개발실 (성장·학습)"
       },
       "tasks": [
         {
@@ -1724,7 +1820,7 @@
           "handler": "ask-claude.sh (LLM)",
           "team": {
             "id": "growth-lead",
-            "name": "인재개발실 (커리어·학습)"
+            "name": "인재개발실 (성장·학습)"
           },
           "discordChannel": "jarvis-ceo",
           "model": "claude-sonnet-4-6",
@@ -1748,15 +1844,47 @@
           }
         },
         {
-          "id": "career-extractor",
-          "name": "커리어 인사이트 자동 추출",
+          "id": "inbox-alert",
+          "name": "Inbox 수집 & 스코어링",
+          "schedule": "0 9 * * *",
+          "scheduleHuman": "매일 09:00",
+          "type": "script",
+          "handler": "inbox-alert.sh",
+          "team": {
+            "id": "growth-lead",
+            "name": "인재개발실 (성장·학습)"
+          },
+          "discordChannel": "jarvis-inbox",
+          "model": "claude-haiku-4-5-20251001",
+          "priority": "daily",
+          "maxBudget": "1.00",
+          "disabled": false,
+          "description": null,
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/inbox-alert.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/inbox-alert-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-inbox-alert-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
+          "id": "profile-extractor",
+          "name": "프로필 주제 자동 추출",
           "schedule": "30 0 * * *",
           "scheduleHuman": "매일 00:30",
           "type": "script",
-          "handler": "career-extractor.mjs",
+          "handler": "profile-extractor.mjs",
           "team": {
             "id": "growth-lead",
-            "name": "인재개발실 (커리어·학습)"
+            "name": "인재개발실 (성장·학습)"
           },
           "discordChannel": null,
           "model": null,
@@ -1766,29 +1894,29 @@
           "description": null,
           "logs": {
             "stdout": {
-              "path": "~/jarvis/runtime/logs/career-extractor.log",
+              "path": "~/jarvis/runtime/logs/profile-extractor.log",
               "exists": true
             },
             "stderr": {
-              "path": "~/jarvis/runtime/logs/career-extractor-err.log",
+              "path": "~/jarvis/runtime/logs/profile-extractor-err.log",
               "exists": true
             },
             "claudeStderr": {
-              "pattern": "claude-stderr-career-extractor-*.log",
+              "pattern": "claude-stderr-profile-extractor-*.log",
               "exists": false
             }
           }
         },
         {
-          "id": "career-weekly",
-          "name": "커리어 주간 리포트",
+          "id": "profile-weekly",
+          "name": "프로필 주간 리포트",
           "schedule": "0 18 * * 5",
           "scheduleHuman": "금요일 18:00",
           "type": "prompt",
           "handler": "ask-claude.sh (LLM)",
           "team": {
             "id": "growth-lead",
-            "name": "인재개발실 (커리어·학습)"
+            "name": "인재개발실 (성장·학습)"
           },
           "discordChannel": "jarvis-dev",
           "model": "claude-sonnet-4-6",
@@ -1798,47 +1926,15 @@
           "description": null,
           "logs": {
             "stdout": {
-              "path": "~/jarvis/runtime/logs/career-weekly.log",
-              "exists": true
+              "path": "~/jarvis/runtime/logs/profile-weekly.log",
+              "exists": false
             },
             "stderr": {
-              "path": "~/jarvis/runtime/logs/career-weekly-err.log",
-              "exists": true
+              "path": "~/jarvis/runtime/logs/profile-weekly-err.log",
+              "exists": false
             },
             "claudeStderr": {
-              "pattern": "claude-stderr-career-weekly-*.log",
-              "exists": true
-            }
-          }
-        },
-        {
-          "id": "job-alert",
-          "name": "채용 공고 크롤링 & 매칭",
-          "schedule": "0 9 * * *",
-          "scheduleHuman": "매일 09:00",
-          "type": "script",
-          "handler": "job-alert.sh",
-          "team": {
-            "id": "growth-lead",
-            "name": "인재개발실 (커리어·학습)"
-          },
-          "discordChannel": "jarvis-career",
-          "model": "claude-haiku-4-5-20251001",
-          "priority": "daily",
-          "maxBudget": "1.00",
-          "disabled": true,
-          "description": null,
-          "logs": {
-            "stdout": {
-              "path": "~/jarvis/runtime/logs/job-alert.log",
-              "exists": true
-            },
-            "stderr": {
-              "path": "~/jarvis/runtime/logs/job-alert-err.log",
-              "exists": true
-            },
-            "claudeStderr": {
-              "pattern": "claude-stderr-job-alert-*.log",
+              "pattern": "claude-stderr-profile-weekly-*.log",
               "exists": false
             }
           }
@@ -1987,6 +2083,38 @@
         "name": "QA실 (품질·감사·E2E)"
       },
       "tasks": [
+        {
+          "id": "bidirectional-audit",
+          "name": "양방향 고아 감사 (4층 방어막)",
+          "schedule": "30 7 * * 0",
+          "scheduleHuman": "일요일 07:30",
+          "type": "script",
+          "handler": "bidirectional-audit.sh",
+          "team": {
+            "id": "audit-lead",
+            "name": "QA실 (품질·감사·E2E)"
+          },
+          "discordChannel": "jarvis-system",
+          "model": null,
+          "priority": "weekly",
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": "일요일 07:30 KST. tasks.json ↔ LaunchAgents plist 양방향 감사. orphan/missing/mismatch 3종 감지. 4층 방어막 P4 (2026-04-22 BYPASS 사건 구조적 재발 방지).",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/bidirectional-audit.log",
+              "exists": false
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/bidirectional-audit-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-bidirectional-audit-*.log",
+              "exists": false
+            }
+          }
+        },
         {
           "id": "code-auditor",
           "name": "코드 품질 감사",
@@ -2181,7 +2309,7 @@
         },
         {
           "id": "jira-sync",
-          "name": "JIRA 커리어 히스토리 동기화",
+          "name": "JIRA 이력 동기화",
           "schedule": "0 9 * * 1",
           "scheduleHuman": "월요일 09:00",
           "type": "script",
@@ -2244,6 +2372,38 @@
           }
         },
         {
+          "id": "legacy-plist-audit",
+          "name": "legacy LaunchAgent plist 감사 (tasks.json 미편입 탐지)",
+          "schedule": "0 4 * * 0",
+          "scheduleHuman": "일요일 04:00",
+          "type": "script",
+          "handler": "legacy-plist-audit.sh",
+          "team": {
+            "id": "audit-lead",
+            "name": "QA실 (품질·감사·E2E)"
+          },
+          "discordChannel": null,
+          "model": null,
+          "priority": "weekly",
+          "maxBudget": "0",
+          "disabled": false,
+          "description": "2026-04-16 카카오 토큰 갱신 크론 영구 소실 사고 재발 방지. com.jarvis.* plist 중 tasks.json에 id 없는 legacy를 주간 탐지. --notify-discord 옵션으로 경보 가능.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/legacy-plist-audit.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/legacy-plist-audit-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-legacy-plist-audit-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
           "id": "log-size-audit",
           "name": "로그 파일 크기 감사",
           "schedule": "17 13 * * *",
@@ -2263,11 +2423,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/log-size-audit.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/log-size-audit-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-log-size-audit-*.log",
@@ -2386,7 +2546,7 @@
           "model": null,
           "priority": "low",
           "maxBudget": null,
-          "disabled": true,
+          "disabled": false,
           "description": "매일 03:23 KST 활성 태스크 프롬프트/script 필드의 스크립트 경로 존재성 감사. 유령 발견 시 jarvis-system 채널 알림 + ledger 기록 + exit 2. 매주 → 매일로 상향(24h 내 감지 보장).",
           "logs": {
             "stdout": {
@@ -2423,11 +2583,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/token-ledger-audit.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/token-ledger-audit-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-token-ledger-audit-*.log",
@@ -2455,11 +2615,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/tune-task-params.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/tune-task-params-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-tune-task-params-*.log",
@@ -2868,6 +3028,38 @@
       },
       "tasks": [
         {
+          "id": "backup-retention-daily",
+          "name": "백업 보존 정책 실행",
+          "schedule": "0 4 * * *",
+          "scheduleHuman": "매일 04:00",
+          "type": "script",
+          "handler": "backup-retention.sh",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": null,
+          "model": null,
+          "priority": "daily",
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": "매일 04:00 KST. 오래된 백업 파일 보존 정책 적용. plist-only였으나 Nexus SSoT로 이관 (2026-04-21).",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/backup-retention-daily.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/backup-retention-daily-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-backup-retention-daily-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
           "id": "boram-daily-schedule",
           "name": "보람 일정 브리핑 (비활성 — personal-schedule-daily로 대체됨)",
           "schedule": "30 7 * * *",
@@ -2900,6 +3092,38 @@
           }
         },
         {
+          "id": "compound-review",
+          "name": "Compound Engineering 주간 복기",
+          "schedule": "30 20 * * 0",
+          "scheduleHuman": "일요일 20:30",
+          "type": "prompt",
+          "handler": "ask-claude.sh (LLM)",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": "jarvis-ceo",
+          "model": "claude-sonnet-4-6",
+          "priority": "weekly",
+          "maxBudget": "0.50",
+          "disabled": false,
+          "description": "매주 일요일 20:30 KST. wiki/meta/learned-mistakes.md(오답노트)의 90일 무재발 항목을 archive로 이동 + 본체 1,000자 상한 압축. Compound Engineering 루프의 '회수' 단계.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/compound-review.log",
+              "exists": false
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/compound-review-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-compound-review-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
           "id": "context-extractor",
           "name": "context-extractor (launchd→tasks.json 이관 2026-04-16)",
           "schedule": "0 1 * * *",
@@ -2927,6 +3151,102 @@
             },
             "claudeStderr": {
               "pattern": "claude-stderr-context-extractor-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
+          "id": "cron-master",
+          "name": "크론 총괄 리포트 — 30분 주기 감사",
+          "schedule": "*/30 * * * *",
+          "scheduleHuman": "매일 30분마다",
+          "type": "script",
+          "handler": "cron-master.sh",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": "jarvis-system",
+          "model": null,
+          "priority": "daily",
+          "maxBudget": null,
+          "disabled": false,
+          "description": "실제 호출자는 crontab의 cron-monitoring-orchestrator.sh component proactive_monitoring (*/30). LaunchAgent plist는 legacy 경로로 보존하되 실제로는 미동작(로그상 06:03 실행 흔적 없음). 2026-04-21 실체 정합화: tasks.json 스케줄을 실제 동작(30분)에 맞춤. Discord 전송은 상태 변화·긴급(PERMA_FAILS)·주간 요약(월 09:00) 시에만 (cron-master.sh 내부 digest hash 비교). allowEmptyResult=true로 빈 출력 허용.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/cron-master.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/cron-master-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-cron-master-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
+          "id": "cron-master-smoke",
+          "name": "크론 마스터 regression 테스트 (주간)",
+          "schedule": "15 9 * * 1",
+          "scheduleHuman": "월요일 09:15",
+          "type": "script",
+          "handler": "cron-master-smoke.sh",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": "jarvis-system",
+          "model": null,
+          "priority": "weekly",
+          "maxBudget": null,
+          "disabled": false,
+          "description": "cron-master.sh 주요 플로우 regression 감지. 월요일 09:15 실행 — 주간 강제 리포트(09:00) 직후. 8 테스트/11 검증. PASS=11/11이면 ✅ 요약만, 하나라도 FAIL이면 실패 케이스 목록 Discord 전송. 신설: 2026-04-21 (UNLOADED[@] unbound variable 재발 방지 포함).",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/cron-master-smoke.log",
+              "exists": false
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/cron-master-smoke-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-cron-master-smoke-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
+          "id": "cron-sync-hourly",
+          "name": "tasks.json → plist 자동 동기화 (매 시간)",
+          "schedule": "15 * * * *",
+          "scheduleHuman": "매일 *:15",
+          "type": "script",
+          "handler": "cron-sync.sh",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": null,
+          "model": null,
+          "priority": "daily",
+          "maxBudget": "0",
+          "disabled": false,
+          "description": "tasks.json 변경이 즉시 ~/Library/LaunchAgents/com.jarvis.*.plist에 반영되도록 매 시간 15분에 cron-sync 실행. 카카오 사고 재발 방지의 일부.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/cron-sync-hourly.log",
+              "exists": false
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/cron-sync-hourly-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-cron-sync-hourly-*.log",
               "exists": false
             }
           }
@@ -3060,6 +3380,134 @@
           }
         },
         {
+          "id": "kakao-token-refresh",
+          "name": "카카오 access_token 자동 갱신",
+          "schedule": "0 */5 * * *",
+          "scheduleHuman": "매일 5시간마다",
+          "type": "script",
+          "handler": "kakao-token-refresh.sh",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": null,
+          "model": null,
+          "priority": "daily",
+          "maxBudget": "0",
+          "disabled": false,
+          "description": "refresh_token으로 access_token 재발급 (6h 만료 주기 대응). 2026-04-16 LaunchAgent 정리 때 누락됐다가 2026-04-22 재등록.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/kakao-token-refresh.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/kakao-token-refresh-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-kakao-token-refresh-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
+          "id": "mistake-extractor",
+          "name": "오답노트 자동 추출",
+          "schedule": "15 3 * * *",
+          "scheduleHuman": "매일 03:15",
+          "type": "script",
+          "handler": "mistake-extractor.mjs",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": null,
+          "model": "claude-haiku-4-5-20251001",
+          "priority": "daily",
+          "maxBudget": "0.30",
+          "disabled": false,
+          "description": "매일 03:15 KST. session-summaries에서 오너 지적/정정을 Haiku로 추출해 wiki/meta/learned-mistakes.md에 append. Jaccard 0.65 유사도로 중복 감지. Compound Engineering 루프의 '수집' 단계.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/mistake-extractor.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/mistake-extractor-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-mistake-extractor-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
+          "id": "plist-bypass-autofix",
+          "name": "plist BYPASS 자동 복구 가드",
+          "schedule": "0 6 * * *",
+          "scheduleHuman": "매일 06:00",
+          "type": "script",
+          "handler": "plist-bypass-autofix.sh",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": null,
+          "model": null,
+          "priority": "daily",
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": "매일 06:00 KST. tasks.json의 output:discord 태스크 중 plist가 bot-cron.sh를 우회하는 항목을 자동으로 정상 패턴으로 rewrite + reload. 2026-04-22 daily-usage-check 4일 침묵 사건 재발 방지 가드.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/plist-bypass-autofix.log",
+              "exists": false
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/plist-bypass-autofix-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-plist-bypass-autofix-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
+          "id": "runtime-rag-backup",
+          "name": "RAG 런타임 백업",
+          "schedule": "0 3 * * *",
+          "scheduleHuman": "매일 03:00",
+          "type": "script",
+          "handler": "runtime-rag-backup.sh",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": null,
+          "model": null,
+          "priority": "daily",
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": "매일 03:00 KST. RAG 런타임 데이터 백업. plist-only였으나 Nexus SSoT로 이관 (2026-04-21).",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/runtime-rag-backup.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/runtime-rag-backup-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-runtime-rag-backup-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
           "id": "self-healing-digest",
           "name": "Self-Healing 주간 감사",
           "schedule": "0 21 * * 0",
@@ -3079,11 +3527,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/self-healing-digest.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/self-healing-digest-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-self-healing-digest-*.log",
@@ -3119,6 +3567,38 @@
             },
             "claudeStderr": {
               "pattern": "claude-stderr-unpause-rebound-check-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
+          "id": "wiki-reference-report",
+          "name": "Wiki 참조 주간 리포트",
+          "schedule": "0 20 * * 0",
+          "scheduleHuman": "일요일 20:00",
+          "type": "script",
+          "handler": "wiki-reference-report.mjs",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": "jarvis-ceo",
+          "model": null,
+          "priority": "weekly",
+          "maxBudget": "0.05",
+          "disabled": false,
+          "description": "매주 일요일 20:00 KST (compound-review 직전). wiki-inject.log를 집계해 도메인별 주입 빈도 + 오답노트 참조율 + 최근 7일 vs 이전 7일 증감을 리포트. wiki/meta/metrics.jsonl에 기록. Compound Engineering 루프의 '효과 측정' 단계.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/wiki-reference-report.log",
+              "exists": false
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/wiki-reference-report-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-wiki-reference-report-*.log",
               "exists": false
             }
           }

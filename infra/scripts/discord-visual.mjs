@@ -47,12 +47,45 @@ function buildSystemDoctorHTML(d) {
   const BG    = { OK: '#14532d1a', WARN: '#78350f1a', FAIL: '#7f1d1d1a' };
   const ICON  = { OK: '✅', WARN: '⚠️', FAIL: '❌' };
 
-  const okN   = d.items.filter(i => i.status === 'OK').length;
-  const warnN = d.items.filter(i => i.status === 'WARN').length;
-  const failN = d.items.filter(i => i.status === 'FAIL').length;
+  // 스키마 유연성: doctor 스킬은 두 형식 보낼 수 있음
+  //   (a) summary.findings/healthy = 문자열 배열  ["🔴 ...", "✅ ..."]
+  //   (b) summary.findings/healthy = 객체 배열    [{level, icon, title, detail}, ...]
+  // 2026-04-25: (b) 호출 시 f.startsWith TypeError 발생 → 양쪽 정규화 처리
+  let items = Array.isArray(d.items) ? d.items : null;
+  if (!items && d.summary) {
+    items = [];
+    const LEVEL_TO_STATUS = { red: 'FAIL', yellow: 'WARN', orange: 'WARN' };
+    const normalizeFinding = (f) => {
+      if (typeof f === 'string') {
+        const status = f.startsWith('🔴') ? 'FAIL' : 'WARN';
+        return { item: f.replace(/^[🔴🟡⚠️❌]\s*/, ''), status, note: '' };
+      }
+      if (f && typeof f === 'object') {
+        const status = LEVEL_TO_STATUS[(f.level || '').toLowerCase()] || 'WARN';
+        return { item: String(f.title || f.item || ''), status, note: String(f.detail || f.note || '') };
+      }
+      return { item: String(f), status: 'WARN', note: '' };
+    };
+    const normalizeHealthy = (h) => {
+      if (typeof h === 'string') {
+        return { item: h.replace(/^[✅]\s*/, ''), status: 'OK', note: '' };
+      }
+      if (h && typeof h === 'object') {
+        return { item: String(h.title || h.item || ''), status: 'OK', note: String(h.detail || h.note || '') };
+      }
+      return { item: String(h), status: 'OK', note: '' };
+    };
+    for (const f of (d.summary.findings || [])) items.push(normalizeFinding(f));
+    for (const h of (d.summary.healthy || [])) items.push(normalizeHealthy(h));
+  }
+  items = items || [];
+
+  const okN   = items.filter(i => i.status === 'OK').length;
+  const warnN = items.filter(i => i.status === 'WARN').length;
+  const failN = items.filter(i => i.status === 'FAIL').length;
   const overIcon = failN > 0 ? '❌' : warnN > 0 ? '⚠️' : '✅';
 
-  const rows = d.items.map(({ item, status, note }) => `
+  const rows = items.map(({ item, status, note }) => `
     <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:7px;
                 margin-bottom:5px;background:${BG[status]||'#1e293b'};border-left:3px solid ${COLOR[status]||'#475569'}">
       <span style="flex:1;font-size:12px;color:#cbd5e1;font-family:monospace">${item}</span>

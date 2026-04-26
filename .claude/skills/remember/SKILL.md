@@ -1,7 +1,7 @@
 ---
 name: remember
 description: |
-  오너가 방금 말한/확정한 사실을 Jarvis 위키(`~/.jarvis/wiki/`)에 즉시 주입합니다.
+  오너가 방금 말한/확정한 사실을 Jarvis 위키(`~/jarvis/runtime/wiki/`)에 즉시 주입합니다.
   디스코드·Claude Code CLI·macOS 앱 어디서 호출하든 동일한 뇌에 쌓이며, source 태그로
   호출 표면이 자동 구분됩니다. 오너의 명시적 "기억해" 요청이나 대화 중 확정된
   사실·결정·선호를 즉시 영속시킬 때 사용합니다.

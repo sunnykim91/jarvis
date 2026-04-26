@@ -8,7 +8,7 @@
 import { readFileSync, existsSync, appendFileSync, writeFileSync, mkdirSync, readdirSync, renameSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import discordPkg from 'discord.js';
-const { EmbedBuilder, MessageFlags } = discordPkg;
+const { EmbedBuilder, MessageFlags, AttachmentBuilder } = discordPkg;
 import { log, sendNtfy } from './claude-runner.js';
 import { lastQueryStore } from './streaming.js';
 import { rerunQuery, clearProcessedId } from './handlers.js';
@@ -91,6 +91,46 @@ export async function handleInteraction(interaction, deps) {
     return;
   }
 
+  // P1-2: Download button — 직전 응답을 .md 파일로 ephemeral 첨부
+  if (interaction.isButton() && interaction.customId.startsWith('download_')) {
+    const key = interaction.customId.replace('download_', '');
+    log('info', 'Download button clicked', { key, channelId: interaction.channelId });
+    try {
+      // interaction.message: 버튼이 붙은 메시지 = 응답 본문
+      const msg = interaction.message;
+      const raw = (msg?.content || '').trim();
+      if (!raw) {
+        await interaction.reply({ content: '⚠️ 다운로드할 본문이 비어있습니다.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const filename = `jarvis-${ts}.md`;
+      const header = [
+        `# Jarvis 응답 아카이브`,
+        ``,
+        `- 세션: \`${key}\``,
+        `- 채널: <#${interaction.channelId}>`,
+        `- 저장 시각: ${new Date().toISOString()}`,
+        ``,
+        `---`,
+        ``,
+      ].join('\n');
+      const body = header + raw;
+      const attachment = new AttachmentBuilder(Buffer.from(body, 'utf8'), { name: filename });
+      await interaction.reply({
+        content: `📄 **${filename}** 준비 완료 · ${body.length.toLocaleString()}자`,
+        files: [attachment],
+        flags: MessageFlags.Ephemeral,
+      });
+    } catch (err) {
+      log('error', 'download button failed', { key, error: err.message });
+      try {
+        await interaction.reply({ content: `⚠️ 다운로드 실패: ${err.message.slice(0, 150)}`, flags: MessageFlags.Ephemeral });
+      } catch { /* already replied */ }
+    }
+    return;
+  }
+
   // Summarize button — 직전 응답 요약 요청
   if (interaction.isButton() && interaction.customId.startsWith('summarize_')) {
     const key = interaction.customId.replace('summarize_', '');
@@ -109,6 +149,45 @@ export async function handleInteraction(interaction, deps) {
     rerunQuery(channel, summarizeQuery, key, { sessions, activeProcesses }, { contextLabel: '📝 요약 중...' }).catch((err) => {
       log('error', 'rerunQuery (summarize button) failed', { key, error: err.message });
     });
+    return;
+  }
+
+  // P1-2: Download button — 현재 응답 본문을 .md 파일로 ephemeral 업로드
+  if (interaction.isButton() && interaction.customId.startsWith('download_')) {
+    const key = interaction.customId.replace('download_', '');
+    log('info', 'Download button clicked', { key, channelId: interaction.channelId });
+    try {
+      // 버튼이 달린 메시지의 본문 추출 (Components V2 포함)
+      const msg = interaction.message;
+      let body = '';
+      if (msg.content && msg.content.trim()) {
+        body = msg.content;
+      } else if (Array.isArray(msg.components) && msg.components.length > 0) {
+        // Components V2: text-display 컴포넌트에서 내용 긁어오기
+        const collectText = (nodes) => {
+          for (const n of nodes || []) {
+            if (typeof n?.content === 'string') body += (body ? '\n\n' : '') + n.content;
+            if (Array.isArray(n?.components)) collectText(n.components);
+            if (Array.isArray(n?.text_displays)) collectText(n.text_displays);
+          }
+        };
+        collectText(msg.components);
+      }
+      if (!body || !body.trim()) {
+        await interaction.reply({ content: '⚠️ 다운로드할 본문이 없습니다.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      const header = `<!-- Jarvis · session ${key} · ${new Date().toISOString()} -->\n\n`;
+      const buf = Buffer.from(header + body, 'utf8');
+      await interaction.reply({
+        content: `💾 \`${body.length.toLocaleString()}\`자 응답입니다.`,
+        files: [{ attachment: buf, name: `jarvis-${key.slice(-8)}-${Date.now().toString(36)}.md` }],
+        flags: MessageFlags.Ephemeral,
+      });
+    } catch (err) {
+      log('error', 'Download button failed', { key, error: err.message });
+      await interaction.reply({ content: `⚠️ 다운로드 실패: ${err.message.slice(0, 200)}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
     return;
   }
 
@@ -168,7 +247,13 @@ export async function handleInteraction(interaction, deps) {
     const memPath = join(BOT_HOME, 'rag', 'memory.md');
     const timestamp = new Date().toISOString().slice(0, 10);
     appendFileSync(memPath, `\n- [${timestamp}] ${text}`);
-    userMemory.addFact(interaction.user.id, text, 'discord-slash-remember');
+    userMemory.addFact(
+      interaction.user.id,
+      text,
+      'discord-slash-remember',
+      'medium',
+      interaction.member?.displayName || interaction.user.displayName || interaction.user.username || '',
+    );
     await interaction.reply({ content: t('cmd.remember.done', { content: text }) });
     log('info', 'Memory saved via /remember', { userId: interaction.user.id, text: text.slice(0, 100) });
 
@@ -841,7 +926,7 @@ export async function handleInteraction(interaction, deps) {
 
   } else {
     // ---------------------------------------------------------------------------
-    // SSoT 스킬 폴백 — 하드코딩 커맨드에 없으면 ~/.jarvis/skills/ 확인
+    // SSoT 스킬 폴백 — 하드코딩 커맨드에 없으면 ~/jarvis/runtime/skills/ 확인
     // 매치되면 채널에 `/skillname target` 메시지를 프록시 발송 (registerSlashProxy로
     // 원 사용자 ID 매핑). messageCreate 필터가 이 프록시를 통과시켜 정상 처리.
     // ---------------------------------------------------------------------------
@@ -859,7 +944,7 @@ export async function handleInteraction(interaction, deps) {
         registerSlashProxy(interaction.channelId, interaction.user.id, proxyContent);
         if (skill.name === 'mock-interview') {
           activateMockSession(interaction.channelId, interaction.user.id);
-          // RAG pre-fetch — 세션 시작 시 1회 정우님 커리어 전체를 긁어와 프롬프트에 박아둠.
+          // RAG pre-fetch — 세션 시작 시 1회 오너 프로필 전체를 긁어와 프롬프트에 박아둠.
           // 이후 어떤 질문이 와도 이 컨텍스트를 재료로만 답변 → 할루시네이션 방지 + 범용 대응.
           (async () => {
             try {

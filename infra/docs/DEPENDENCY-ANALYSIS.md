@@ -113,7 +113,7 @@ npm install --production --omit=optional
 **설치 명령:**
 ```bash
 git clone https://github.com/your-username/jarvis.git ~/.jarvis
-cd ~/.jarvis/discord
+cd ~/jarvis/runtime/discord
 
 # 의존성 (필수 2개만)
 npm install discord.js dotenv
@@ -162,7 +162,7 @@ claude login  # 인증
 
 **NPM 패키지 추가:**
 ```bash
-cd ~/.jarvis/discord
+cd ~/jarvis/runtime/discord
 npm install better-sqlite3 yaml \
   @anthropic-ai/claude-agent-sdk \
   @modelcontextprotocol/sdk @modelcontextprotocol/server-github
@@ -221,10 +221,10 @@ GOOGLE_REFRESH_TOKEN=xxx
 **설치 추가 작업:**
 ```bash
 # RAG 초기화
-~/.jarvis/bin/rag-init.sh
+~/jarvis/runtime/bin/rag-init.sh
 
 # 팀 설정 로드
-~/.jarvis/bin/plugin-loader.sh
+~/jarvis/runtime/bin/plugin-loader.sh
 
 # 모든 크론 활성화 (24개 task)
 # config/tasks.json 참고
@@ -264,7 +264,7 @@ OWNER_DISCORD_ID=
 **validation:**
 ```bash
 # 검증 스크립트
-cat > ~/.jarvis/bin/validate-env-tier0.sh <<'EOF'
+cat > ~/jarvis/runtime/bin/validate-env-tier0.sh <<'EOF'
 #!/bin/bash
 set -euo pipefail
 
@@ -296,7 +296,7 @@ echo ""
 echo "All Tier 0 variables OK. Ready to start bot."
 echo "  cd discord && node discord-bot.js"
 EOF
-chmod +x ~/.jarvis/bin/validate-env-tier0.sh
+chmod +x ~/jarvis/runtime/bin/validate-env-tier0.sh
 ```
 
 ### Tier 1: 크론 자동화 추가
@@ -405,7 +405,7 @@ async search(query, limit = 5) {
 **Tier 1은 OpenAI 없어야 함 → BM25 Only:**
 
 ```bash
-# ~/.jarvis/discord/.env (Tier 1)
+# ~/jarvis/runtime/discord/.env (Tier 1)
 # 생략: OPENAI_API_KEY
 # 생략: JINA_API_KEY
 # 생략: ENABLE_RAG_ENRICHMENT
@@ -461,8 +461,8 @@ async search(query, limit = 5) {
 - [ ] `npm install @lancedb/lancedb apache-arrow openai chokidar`
 - [ ] OpenAI API key 발급 (https://platform.openai.com/api-keys)
 - [ ] `.env` 추가: `OPENAI_API_KEY=sk-proj-xxx`
-- [ ] `~/.jarvis/bin/rag-init.sh` (처음 1회)
-- [ ] `~/.jarvis/bin/plugin-loader.sh` (팀 설정)
+- [ ] `~/jarvis/runtime/bin/rag-init.sh` (처음 1회)
+- [ ] `~/jarvis/runtime/bin/plugin-loader.sh` (팀 설정)
 - [ ] 모든 크론 활성화
 
 ---
@@ -504,7 +504,7 @@ npm install "${npm_args[@]}"
 **B. validate-env-tier0.sh (위에서 제시):**
 
 ```bash
-# ~/.jarvis/bin/validate-env-tier0.sh
+# ~/jarvis/runtime/bin/validate-env-tier0.sh
 # 실행: source validate-env-tier0.sh
 ```
 
@@ -564,11 +564,11 @@ npm install "${npm_args[@]}"
 ## 참고 자료
 
 - **파일 경로:**
-  - `~/.jarvis/discord/package.json` — NPM 의존성 정의
-  - `~/.jarvis/discord/.env.example` — 환경변수 템플릿
-  - `~/.jarvis/lib/rag-engine.mjs` — RAG 검색 로직
-  - `~/.jarvis/bin/jarvis-init.sh` — 초기화 위저드
-  - `~/.jarvis/install.sh` — 설치 스크립트
+  - `~/jarvis/runtime/discord/package.json` — NPM 의존성 정의
+  - `~/jarvis/runtime/discord/.env.example` — 환경변수 템플릿
+  - `~/jarvis/runtime/lib/rag-engine.mjs` — RAG 검색 로직
+  - `~/jarvis/runtime/bin/jarvis-init.sh` — 초기화 위저드
+  - `~/jarvis/runtime/install.sh` — 설치 스크립트
 
 - **메모리 참고:**
   - project_overview: Jarvis 프로젝트 현황

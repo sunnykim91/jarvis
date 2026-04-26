@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { log } from './claude-runner.js';
 
-const BOT_HOME = process.env.BOT_HOME || join(homedir(), '.jarvis');
+const BOT_HOME = process.env.BOT_HOME || join(homedir(), 'jarvis/runtime');
 
 // Past-reference patterns — detect when user mentions previous conversation
 export const PAST_REF_PATTERN = /저번에|아까|기억|지난번|전에 말한|예전에|그때|다시 한번|아까 말한|이전에|방금|위에서|위에꺼|앞에서/;
@@ -122,6 +122,7 @@ export function closeRagEngine() {
 
 /**
  * Search RAG for context relevant to the query.
+ * LLM Wiki와 병행 사용: Wiki → RAG 순서로 컨텍스트 우선순위 결정.
  * @param {string} query - The user's prompt
  * @param {number} [limit=3] - Max results
  * @returns {Promise<string>} Formatted context block or empty string
@@ -162,11 +163,21 @@ export async function searchRagForContext(query, limit = 3, opts = {}) {
     const snippet = r.text?.slice(0, 300) ?? '';
     return `[${src}] ${snippet}`;
   });
-  let stdout = `## 관련 과거 기록 (RAG)\n${lines.join('\n\n')}\n\n`;
-  if (stdout.length > 2000) {
-    const truncated = stdout.slice(0, 2000);
-    const lastNewline = truncated.lastIndexOf('\n');
-    stdout = (lastNewline > 0 ? truncated.slice(0, lastNewline) : truncated) + '\n[...더 있음]';
+  return `## 관련 과거 기록 (RAG)\n${lines.join('\n\n')}\n\n`;
+}
+
+/**
+ * 위키 기반 컨텍스트 검색 (LLM Wiki 레이어).
+ * RAG보다 먼저 호출 — 소화된 구조화 정보 제공.
+ * 비어 있으면 빈 문자열 반환 → 호출부에서 RAG로 폴백.
+ */
+export async function searchWikiForContext(userId, query) {
+  if (!userId || !query) return '';
+  try {
+    const { getWikiContext } = await import('./wiki-engine.mjs');
+    return getWikiContext(userId, query);
+  } catch (err) {
+    log('warn', '[rag-helper] wiki search failed', { error: err.message });
+    return '';
   }
-  return stdout;
 }

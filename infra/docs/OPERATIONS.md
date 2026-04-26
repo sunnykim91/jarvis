@@ -40,7 +40,7 @@ All cron tasks are defined in `config/tasks.json` and executed by `bin/bot-cron.
 | `ceo-weekly-digest` | Mon 09:00 | CEO weekly review digest |
 | `connections-weekly-insight` | Mon 09:45 | Cross-team pattern analysis |
 | `weekly-usage-stats` | Mon 09:00 | Discord usage statistics |
-| `career-weekly` | Fri 18:00 | Career growth report |
+| `profile-weekly` | Fri 18:00 | Profile growth report |
 | `academy-support` | Sun 20:00 | Learning team digest |
 | `brand-weekly` | Tue 08:00 | Brand/OSS growth report |
 | `recon-weekly` | Mon 09:00 | Intelligence exploration |
@@ -226,13 +226,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed flow diagrams.
 
 ```bash
 # Check system status
-bash ~/.jarvis/scripts/e2e-test.sh
+bash ~/jarvis/runtime/scripts/e2e-test.sh
 
 # Force restart bot
 launchctl kickstart -k gui/$(id -u)/ai.jarvis.discord-bot
 
 # View recent failures
-grep 'FAILED\|ABORTED' ~/.jarvis/logs/cron.log | tail -20
+grep 'FAILED\|ABORTED' ~/jarvis/runtime/logs/cron.log | tail -20
 
 # Kill stale claude processes
 pkill -f 'claude.*-p'
@@ -312,6 +312,7 @@ board_get_pending_reactions "council"
 - **실행 로그 개선**: 시작 시 Board API에서 태스크 제목을 가져와 "⚙️ 작업 시작 — {제목}" 로그 전송. heartbeat(30초 간격)에 경과 시간 포함 ("⏳ 진행 중 (120s 경과)")
 - **non-retryable exit code**: 2 (명시적 실패), 124 (timeout), 127 (command not found)
 - **retryable exit code**: 1, 137(OOM kill), 143(SIGTERM), 기타
+- **`.env` graceful 처리** (2026-04-19, 7a07782): `.env` 파일 부재 또는 파싱 오류 시 `|| true`로 안전하게 계속 진행 — 이전에는 `set -euo pipefail` 환경에서 `.env` source 실패 시 retry-wrapper 전체가 즉시 종료되는 회귀가 있었음
 
 ### crontab 환경 PATH 주의사항
 
@@ -344,7 +345,7 @@ _cur_md5=$(printf '%s' "$PROMPT" | shasum 2>/dev/null | awk '{print $1}' || true
 
 ```bash
 # Standard deploy (smoke test → restart)
-bash ~/.jarvis/scripts/deploy-with-smoke.sh
+bash ~/jarvis/runtime/scripts/deploy-with-smoke.sh
 
 # Manual restart
 launchctl kickstart -k gui/$(id -u)/ai.jarvis.discord-bot
@@ -378,9 +379,9 @@ launchctl kickstart -k gui/$(id -u)/ai.jarvis.discord-bot
 
 ### 백로그 파일 위치
 
-- **중앙 저장소**: `~/.jarvis/config/dev-backlog.json`
-- **상태 조회**: `cat ~/.jarvis/config/dev-backlog.json | jq '.backlog[] | {id, title, status}'`
-- **차단 요인 확인**: `cat ~/.jarvis/config/dev-backlog.json | jq '.blocked_by'`
+- **중앙 저장소**: `~/jarvis/runtime/config/dev-backlog.json`
+- **상태 조회**: `cat ~/jarvis/runtime/config/dev-backlog.json | jq '.backlog[] | {id, title, status}'`
+- **차단 요인 확인**: `cat ~/jarvis/runtime/config/dev-backlog.json | jq '.blocked_by'`
 
 ### 배포 전략
 
@@ -399,7 +400,7 @@ launchctl kickstart -k gui/$(id -u)/ai.jarvis.discord-bot
 
 ### 위치
 
-- **파일**: `~/.jarvis/state/token-ledger.jsonl` (append-only, 라인당 JSON 1개)
+- **파일**: `~/jarvis/runtime/state/token-ledger.jsonl` (append-only, 라인당 JSON 1개)
 - **Writer**: `bin/ask-claude.sh` (line ~253 직후, log_jsonl/record_outcome 블록 뒤)
 - **Rotation**: 없음 (SSoT 보존). 필요 시 월 단위 아카이브 별도 스크립트.
 
@@ -441,18 +442,18 @@ launchctl kickstart -k gui/$(id -u)/ai.jarvis.discord-bot
 ```bash
 # 오늘 총 지출
 jq -s 'map(select(.ts | startswith("'"$(date -u +%Y-%m-%d)"'"))) | map(.cost_usd) | add' \
-  ~/.jarvis/state/token-ledger.jsonl
+  ~/jarvis/runtime/state/token-ledger.jsonl
 
 # 태스크별 24h 집계
 jq -s 'map(select(.ts > (now - 86400 | strftime("%Y-%m-%dT%H:%M:%SZ")))) \
   | group_by(.task) \
   | map({task: .[0].task, runs: length, cost: (map(.cost_usd) | add), unique_hashes: ([.[].result_hash] | unique | length)}) \
   | sort_by(-.cost)' \
-  ~/.jarvis/state/token-ledger.jsonl
+  ~/jarvis/runtime/state/token-ledger.jsonl
 
 # 결과 해시 중복 탐지 (같은 해시가 N번 이상 나오면 dedup 후보)
 jq -s 'group_by(.result_hash) | map(select(length >= 3)) | map({hash: .[0].result_hash, task: .[0].task, count: length})' \
-  ~/.jarvis/state/token-ledger.jsonl
+  ~/jarvis/runtime/state/token-ledger.jsonl
 ```
 
 ### 실패 모드
@@ -585,16 +586,16 @@ Tier 1 위에 아래 레이어가 순차 구축된다:
    - 14일+ stderr 로그 100개+ 시 → "로그 로테이션" 권장
    - CB 3회+ 있으면 → "root cause 파악" 권장
 
-**출력**: `~/.jarvis/results/token-ledger-audit/<YYYY-MM-DD>.md`
+**출력**: `~/jarvis/runtime/results/token-ledger-audit/<YYYY-MM-DD>.md`
 
 **알림**: 유의미한 발견(dedup/budget/cb)이 있으면 Discord `jarvis-system` 채널 + ntfy 동시 전송.
 
 **수동 실행**:
 ```bash
-BOT_HOME=~/.jarvis ~/jarvis/infra/scripts/token-ledger-audit.sh
+BOT_HOME=~/jarvis/runtime ~/jarvis/infra/scripts/token-ledger-audit.sh
 
 # 또는 bot-cron.sh 경로로
-~/.jarvis/bin/bot-cron.sh token-ledger-audit
+~/jarvis/runtime/bin/bot-cron.sh token-ledger-audit
 ```
 
 **설계 의도**: 이전에 사람이 수동으로 했던 "토큰 낭비 5팀 감사"를 매주 자동으로 수행. 원장이 1~2주 쌓이면 Tier 1~4 활성화 우선순위를 데이터 기반으로 결정할 수 있다. 땜질식 대응이 아닌 지속 가능한 waste prevention 루프를 구성.
@@ -603,13 +604,13 @@ BOT_HOME=~/.jarvis ~/jarvis/infra/scripts/token-ledger-audit.sh
 
 `jarvis-cron.sh` / `bot-cron.sh` 의 `_permanent_disable_task` 헬퍼가 script-not-found
 등 구조적 실패 감지 시 태스크를 `enabled: false` + `_auto_disabled: true` 로 전환하고
-`~/.jarvis/ledger/auto-disable.jsonl` 에 기록한다. Discord `jarvis-system` 에 알림 도착.
+`~/jarvis/runtime/ledger/auto-disable.jsonl` 에 기록한다. Discord `jarvis-system` 에 알림 도착.
 
 ### 복구 체크리스트
 
 1. **원장 확인** — 어떤 태스크가 왜 비활성화됐나
    ```bash
-   tail -20 ~/.jarvis/ledger/auto-disable.jsonl | jq .
+   tail -20 ~/jarvis/runtime/ledger/auto-disable.jsonl | jq .
    ```
 
 2. **원인 분류**
@@ -627,7 +628,7 @@ BOT_HOME=~/.jarvis ~/jarvis/infra/scripts/token-ledger-audit.sh
 
 4. **수동 실행 스모크 테스트** — 재활성화 전 반드시 확인
    ```bash
-   BOT_HOME=~/.jarvis bash ~/.jarvis/scripts/<script-name>.sh
+   BOT_HOME=~/jarvis/runtime bash ~/jarvis/runtime/scripts/<script-name>.sh
    # exit 0 이고 기대 출력 있어야 통과
    ```
 
@@ -635,7 +636,7 @@ BOT_HOME=~/.jarvis ~/jarvis/infra/scripts/token-ledger-audit.sh
    ```bash
    python3 -c '
    import json, os
-   p="/Users/ramsbaby/.jarvis/config/tasks.json"
+   p="/Users/ramsbaby/jarvis/runtime/config/tasks.json"
    d=json.load(open(p))
    for t in d["tasks"]:
        if t["id"]=="<TASK_ID>":
@@ -648,14 +649,14 @@ BOT_HOME=~/.jarvis ~/jarvis/infra/scripts/token-ledger-audit.sh
 
 6. **cron 1회 실행으로 최종 검증**
    ```bash
-   BOT_HOME=~/.jarvis ~/.jarvis/bin/jarvis-cron.sh <TASK_ID>
-   grep "\[<TASK_ID>\]" ~/.jarvis/logs/cron.log | tail -3
+   BOT_HOME=~/jarvis/runtime ~/jarvis/runtime/bin/jarvis-cron.sh <TASK_ID>
+   grep "\[<TASK_ID>\]" ~/jarvis/runtime/logs/cron.log | tail -3
    # START → SUCCESS → DONE 이어야 정상
    ```
 
 7. **audit 재실행으로 누락 0 확인**
    ```bash
-   BOT_HOME=~/.jarvis bash ~/.jarvis/scripts/tasks-integrity-audit.sh
+   BOT_HOME=~/jarvis/runtime bash ~/jarvis/runtime/scripts/tasks-integrity-audit.sh
    # "누락 스크립트 0건" 확인
    ```
 
@@ -696,7 +697,7 @@ for label in <labels>; do
     cp "$plist" "$BACKUP_DIR/" && rm -f "$plist"
 done
 # 결과 검증
-BOT_HOME=~/.jarvis bash ~/.jarvis/scripts/tasks-integrity-audit.sh
+BOT_HOME=~/jarvis/runtime bash ~/jarvis/runtime/scripts/tasks-integrity-audit.sh
 ```
 
 ### 재발 방지

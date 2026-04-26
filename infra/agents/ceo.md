@@ -15,10 +15,10 @@
 5. DNA 후보 패턴 검토
 
 ## 산출물 (4종, Write 도구로 작성)
-1. `~/.jarvis/state/context-bus.md` — 전체 요약 덮어쓰기 (500자 이내)
-2. `~/.jarvis/state/decisions/{날짜}.jsonl` — 오늘 결정사항 append
-3. `~/.jarvis/state/board-minutes/{날짜}.md` — 회의록 저장
-4. `~/.jarvis/config/goals.json` — KR current 값 갱신 (측정 가능할 때만)
+1. `~/jarvis/runtime/state/context-bus.md` — 전체 요약 덮어쓰기 (500자 이내)
+2. `~/jarvis/runtime/state/decisions/{날짜}.jsonl` — 오늘 결정사항 append
+3. `~/jarvis/runtime/state/board-minutes/{날짜}.md` — 회의록 저장
+4. `~/jarvis/runtime/config/goals.json` — KR current 값 갱신 (측정 가능할 때만)
 
 ## 의사결정 기준
 - company-dna.md의 CORE DNA를 항상 우선

@@ -57,7 +57,7 @@ User query (Discord / Cron task)
 **Layer 2** (Claude가 숫자를 해석):
 - 메트릭 + Google Calendar 일정 + 대화 요약을 Claude에 전달
 - "이 숫자들이 왜 이렇게 변하고 있는가?" 해석
-- 결과를 `~/.jarvis/context/insight-report.md`에 저장
+- 결과를 `~/jarvis/runtime/context/insight-report.md`에 저장
 
 **소비 경로:**
 - `context-loader.sh`가 매 요청마다 자동 로드 → system prompt에 항상 포함
@@ -171,7 +171,7 @@ BOT_HOME=~/.jarvis node rag/bin/insight-distill.mjs
 BOT_HOME=~/.jarvis node rag/bin/insight-metrics.mjs
 
 # Verify report exists
-cat ~/.jarvis/context/insight-report.md
+cat ~/jarvis/runtime/context/insight-report.md
 ```
 
 </details>

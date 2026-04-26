@@ -79,7 +79,7 @@ printf '%s' "$result"
 4. Step 1 fetch 실패 시 empty string으로 graceful fallback
 5. Step 2에서 cache hit 시 ledger에 `model="cache", status="cache_hit", cost_usd=0` 기록
 6. Step 3에서 ask-claude.sh 경로 탐색 (BOT_HOME → repo fallback)
-7. `~/.jarvis/config/tasks.json` 해당 태스크에 `script: ~/jarvis/infra/scripts/<task>-gate.sh` 필드 추가
+7. `~/jarvis/runtime/config/tasks.json` 해당 태스크에 `script: ~/jarvis/infra/scripts/<task>-gate.sh` 필드 추가
 8. `allowedTools` 제거 (script 모드에서는 미사용)
 9. `plugin-loader.sh` 실행하여 `effective-tasks.json` 재생성
 10. 수동 테스트: 첫 실행(cache miss) → 두 번째 실행(cache hit) 검증
@@ -92,17 +92,17 @@ printf '%s' "$result"
 
 | 파일 | 용도 |
 |---|---|
-| `~/.jarvis/state/<task-id>-last.hash` | 마지막 입력 해시 |
-| `~/.jarvis/state/<task-id>-last-result.md` | 마지막 포맷 결과 (cache hit 시 재사용) |
-| `~/.jarvis/results/<task-id>/` | bot-cron.sh가 관리하는 result 디렉토리 (retention 적용) |
+| `~/jarvis/runtime/state/<task-id>-last.hash` | 마지막 입력 해시 |
+| `~/jarvis/runtime/state/<task-id>-last-result.md` | 마지막 포맷 결과 (cache hit 시 재사용) |
+| `~/jarvis/runtime/results/<task-id>/` | bot-cron.sh가 관리하는 result 디렉토리 (retention 적용) |
 
 ---
 
 ## 관련 구조
 
-- **SSoT 원장**: `~/.jarvis/state/token-ledger.jsonl` (모든 게이트 cache_hit 기록)
+- **SSoT 원장**: `~/jarvis/runtime/state/token-ledger.jsonl` (모든 게이트 cache_hit 기록)
 - **주간 감사**: `infra/scripts/token-ledger-audit.sh` — 큐에 후보 자동 수집
-- **후보 큐**: `~/.jarvis/state/gate-candidates.json` (아래 참조)
+- **후보 큐**: `~/jarvis/runtime/state/gate-candidates.json` (아래 참조)
 - **Tier 로드맵**: `infra/docs/OPERATIONS.md` Token Ledger 섹션
 
 ---

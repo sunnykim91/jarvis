@@ -574,6 +574,26 @@ async function main() {
   const { extname } = await import('node:path');
   const targets = [];
 
+  // 0. Wiki (Jarvis SSoT 메모리) — 최우선 처리
+  // Compound Engineering 루프 핵심: meta/learned-mistakes.md, meta/eureka.jsonl 같은
+  // 오답노트·통찰 저장소가 rag_search로 회수되어야 과거 실수 재발을 막는다.
+  // 이전엔 7번째 카테고리에 있어 MAX_RUNTIME(90m) 안에 한 번도 도달 못함 → 1순위로 격상 (2026-04-22).
+  async function collectWikiMd(dirPath) {
+    try {
+      const entries = await readdir(dirPath, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const fullPath = join(dirPath, e.name);
+        if (e.isDirectory()) {
+          await collectWikiMd(fullPath);
+        } else if (extname(e.name) === '.md') {
+          targets.push(fullPath);
+        }
+      }
+    } catch { /* wiki may not exist */ }
+  }
+  await collectWikiMd(join(BOT_HOME, 'wiki'));
+
   // 1. Context files (top-level + discord-history subdir)
   try {
     const contextDir = join(BOT_HOME, 'context');
@@ -666,6 +686,8 @@ async function main() {
       if (extname(f) === '.md') targets.push(join(inboxDir, f));
     }
   } catch { /* inbox may not exist */ }
+
+  // 3c. Wiki: 카테고리 0번으로 이동됨 (라인 ~575). 중복 방지를 위해 여기서는 재호출하지 않음.
 
   // 4. 팀 보고서 & 공유 인박스 (팀 간 통신 이력)
   for (const dir of ['reports', 'shared-inbox']) {
@@ -839,9 +861,9 @@ async function main() {
   if (pruned > 0) ragLog(`[rag-index] Pruned ${pruned} stale state entries`);
 
   // Index changed files
-  // MAX_RUNTIME_MS: fresh rebuild는 무제한 (130K 청크가 90분 안에 못 끝남 → 무한 루프 원인)
-  // incremental 모드만 90분 제한 (변경분만 처리하므로 충분)
-  const MAX_RUNTIME_MS = isFreshRebuild ? Infinity : 90 * 60 * 1000;
+  // MAX_RUNTIME_MS: fresh rebuild도 4시간 상한 적용 (Infinity는 stuck 시 무한 CPU 독식 위험)
+  // incremental 모드는 90분 제한 (변경분만 처리하므로 충분)
+  const MAX_RUNTIME_MS = isFreshRebuild ? 4 * 60 * 60 * 1000 : 90 * 60 * 1000;
   let _processed = 0;
   let _runtimeExceeded = false;
 
@@ -855,7 +877,38 @@ async function main() {
   let consecutiveLanceErrors = 0;
   let didMidRunRecovery = false;
 
-  for (const filePath of targets) {
+  // ─── 2026-04-20 파일 단위 병렬 pre-warm ──────────────────────────
+  // 현재 파일을 처리하는 동안 다음 N-1개 파일의 _prepareFileRecords()를
+  // 병렬로 선행 발사 → Ollama HTTP 레이턴시와 청킹/파싱을 오버랩.
+  // DB write(table.add)는 여전히 메인 루프에서 순차 실행 → 기존 fragment
+  // corruption recovery / flush 로직 무결하게 유지.
+  const PREFETCH_WINDOW = Math.max(1, Number(process.env.RAG_INDEX_CONCURRENCY) || 3);
+  const prefetchCache = new Map();
+  function prefetchFile(fp) {
+    if (prefetchCache.has(fp)) return;
+    prefetchCache.set(fp, (async () => {
+      try {
+        const mt = await getMtime(fp);
+        if (mt === null) return null;
+        const se = state[fp];
+        const sm = (typeof se === 'object' && se !== null) ? se.mtime : se;
+        if (sm === mt) return { mtime: mt, skipped: true };
+        const records = await engine._prepareFileRecords(fp);
+        return { mtime: mt, records };
+      } catch (err) {
+        return { error: err };
+      }
+    })());
+  }
+  // 초기 윈도우 채우기
+  for (let j = 0; j < Math.min(PREFETCH_WINDOW, targets.length); j++) {
+    prefetchFile(targets[j]);
+  }
+  ragLog(`[rag-index] 병렬 pre-warm 활성화: PREFETCH_WINDOW=${PREFETCH_WINDOW}`);
+
+  for (let i = 0; i < targets.length; i++) {
+    const filePath = targets[i];
+
     // 런타임 초과 시 안전 중단 (현재까지의 state는 저장함)
     if (Date.now() - startTime > MAX_RUNTIME_MS) {
       _runtimeExceeded = true;
@@ -864,18 +917,25 @@ async function main() {
       break;
     }
 
-    const mtime = await getMtime(filePath);
-    if (mtime === null) continue;
+    // 다음 윈도우 pre-warm — 현재 파일 소비 시점에 ahead 요청 발사
+    if (i + PREFETCH_WINDOW < targets.length) {
+      prefetchFile(targets[i + PREFETCH_WINDOW]);
+    }
 
-    // Skip if unchanged
-    // state[filePath]는 {mtime, chunks} 형태 또는 레거시 숫자(mtime) 형태 모두 지원
-    const _stateEntry = state[filePath];
-    const _savedMtime = (typeof _stateEntry === 'object' && _stateEntry !== null) ? _stateEntry.mtime : _stateEntry;
+    // Pre-warmed 결과 await
+    const pre = await prefetchCache.get(filePath);
+    prefetchCache.delete(filePath);
 
-    if (_savedMtime === mtime) {
-      skipped++;
+    if (!pre) continue;              // mtime null (파일 사라짐)
+    if (pre.skipped) { skipped++; continue; }
+    if (pre.error) {
+      // _prepareFileRecords 단계 실패 — 개별 파일 건너뛰고 진행
+      // (fragment corruption은 table.add() 시점에만 발생하므로 아래 catch에서 처리)
+      console.warn(`[rag-index] prepare 실패: ${filePath.slice(-60)} — ${pre.error.message?.slice(0, 80)}`);
       continue;
     }
+    const mtime = pre.mtime;
+    const _prefetchedRecords = pre.records;
 
     _processed++;
 
@@ -910,8 +970,9 @@ async function main() {
     // state 갱신을 table.add() 성공 후로 지연 — batch 실패 시 "처리됨"으로 잘못 기록되는 것 방지
     // _pendingStateUpdates_global: batch flush 전까지 대기하는 state 항목들
     try {
+      // _prefetchedRecords는 위 prefetchFile()에서 병렬로 미리 계산된 결과
       if (isFreshRebuild) {
-        const records = await engine._prepareFileRecords(filePath);
+        const records = _prefetchedRecords;
         if (records.length > 0) {
           _pendingRecords.push(...records);
           _pendingStateUpdates_global.push({ filePath, mtime, chunks: records.length });
@@ -932,7 +993,7 @@ async function main() {
         }
         consecutiveLanceErrors = 0;
       } else {
-        const records = await engine._prepareFileRecords(filePath);
+        const records = _prefetchedRecords;
         if (records.length > 0) {
           await engine.deleteBySource(filePath);
           _pendingRecords.push(...records);

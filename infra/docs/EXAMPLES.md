@@ -41,7 +41,7 @@ addTask({
   prompt: `discord/lib/ 하위 모든 .mjs 파일에서
     import './foo' → import './foo.js' 형식으로 수정.
     node --check로 문법 검증 후 보고.`,
-  completionCheck: "node --check ~/.jarvis/discord/lib/handlers.mjs",
+  completionCheck: "node --check ~/jarvis/runtime/discord/lib/handlers.mjs",
   maxBudget: '0.20',
   timeout: 120,
   allowedTools: 'Bash,Read,Write',

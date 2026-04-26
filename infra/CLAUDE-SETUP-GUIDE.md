@@ -126,7 +126,7 @@ With Nexus, output is compressed to ~5.4KB (98% reduction), enabling 3+ hour ses
 After setup, your Jarvis installation should have:
 
 ```
-~/.jarvis/              (or wherever you clone — set as BOT_HOME)
+~/jarvis/runtime/              (or wherever you clone — set as BOT_HOME)
 ├── discord/
 │   ├── discord-bot.js           ← Main bot entry point
 │   ├── personas.json            ← Channel → persona mapping (from .example)

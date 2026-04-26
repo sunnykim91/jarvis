@@ -16,6 +16,12 @@ __pycache__/
 private/
 !private/README.md
 
+# Local IDE/LSP caches (may contain personal context)
+.serena/
+.vscode/
+.idea/
+
+
 # RAG data (user-specific)
 *.lance/
 index-state.json
@@ -93,6 +99,8 @@ runtime/discord/.env
 infra/config/monitoring.json
 infra/config/models.json
 config/*.bak*
+infra/discord/*.bak-*
+infra/discord/**/*.bak-*
 *.backup
 
 # JSONL 원장 (토큰, 에러, 커밋먼트 등)
@@ -120,5 +128,12 @@ infra/context/owner/
 infra/logs/
 infra/state/
 
+# Chrome Extension (오너 개인 프로토타입 — 사이트 목록/파서에 PII 결합)
+infra/chrome-extension/*
+!infra/chrome-extension/README.md
+
 # Claude Code worktrees
 .claude/worktrees/
+
+# Archive directories (PII 정리 과정에서 이관된 구파일)
+_archive-*/

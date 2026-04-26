@@ -28,6 +28,7 @@ const BOT_HOME             = INFRA_HOME;
 const VAULT_PATH           = process.env.VAULT_DIR || join(homedir(), 'vault');
 const DISCORD_HISTORY_PATH = join(BOT_HOME, 'context', 'discord-history');
 const INBOX_PATH           = join(BOT_HOME, 'inbox');
+const WIKI_PATH            = join(BOT_HOME, 'wiki');
 const EVENT_BUS_PATH       = join(STATE_DIR, 'events');
 const ENV_PATH             = join(BOT_HOME, 'discord', '.env');
 
@@ -184,7 +185,7 @@ async function main() {
 
   // ─── Chokidar watcher ────────────────────────────────────────────────────
 
-  const watchTargets = [VAULT_PATH, DISCORD_HISTORY_PATH, INBOX_PATH, EVENT_BUS_PATH];
+  const watchTargets = [VAULT_PATH, DISCORD_HISTORY_PATH, INBOX_PATH, WIKI_PATH, EVENT_BUS_PATH];
   const watcher = chokidar.watch(watchTargets, {
     ignored: (filePath) => {
       const basename = filePath.split('/').pop();
