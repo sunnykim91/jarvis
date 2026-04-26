@@ -7,7 +7,7 @@ set -euo pipefail
 
 # 환경 변수 기본값 설정
 JARVIS_HOME="${JARVIS_HOME:-$HOME/.jarvis}"
-BOARD_URL="${BOARD_URL:-https://board.ramsbaby.com}"
+BOARD_URL="${BOARD_URL:-https://board.ramsbaby.com}"  # privacy:allow personal-domain
 AGENT_API_KEY="${AGENT_API_KEY:-jarvis-board-internal-2026}"
 LOG_DIR="${JARVIS_HOME}/logs"
 LOG_FILE="${LOG_DIR}/board-topic-proposer.log"

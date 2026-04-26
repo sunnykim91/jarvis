@@ -6,7 +6,7 @@
 set -euo pipefail
 
 BOT_HOME="${BOT_HOME:=$HOME/.jarvis}"
-BOARD_URL="${BOARD_URL:-https://board.ramsbaby.com}"
+BOARD_URL="${BOARD_URL:-https://board.ramsbaby.com}"  # privacy:allow personal-domain
 AGENT_API_KEY="${AGENT_API_KEY:-}"
 LOG_DIR="${BOT_HOME}/logs"
 STATE_DIR="${BOT_HOME}/state"
