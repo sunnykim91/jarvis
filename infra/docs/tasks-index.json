@@ -1,24 +1,24 @@
 {
-  "generatedAt": "2026-04-22T14:55:03.515Z",
+  "generatedAt": "2026-04-25T21:17:05.440Z",
   "source": "~/jarvis/runtime/config/tasks.json",
-  "totalTasks": 109,
+  "totalTasks": 108,
   "teamDistribution": {
     "standup": 1,
     "president": 13,
     "infra-lead": 17,
     "finance": 8,
     "trend-lead": 8,
-    "record-lead": 6,
+    "record-lead": 7,
     "library": 1,
     "growth-lead": 4,
     "brand-lead": 4,
     "audit-lead": 19,
-    "secretary": 10,
+    "secretary": 8,
     "uncategorized": 18
   },
   "typeDistribution": {
     "prompt": 37,
-    "script": 72
+    "script": 71
   },
   "groups": [
     {
@@ -283,7 +283,7 @@
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/connections-weekly-insight-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-connections-weekly-insight-*.log",
@@ -475,7 +475,7 @@
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/weekly-roi-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-weekly-roi-*.log",
@@ -767,11 +767,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/memory-expire.log",
-              "exists": true
+              "exists": false
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/memory-expire-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-memory-expire-*.log",
@@ -954,7 +954,7 @@
           "model": null,
           "priority": null,
           "maxBudget": null,
-          "disabled": false,
+          "disabled": true,
           "description": "Jarvis 자동 시스템 점검 (LaunchAgent, Discord봇, RAG, 크론, E2E, Glances, 디스크)",
           "logs": {
             "stdout": {
@@ -1131,7 +1131,7 @@
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/finance-monitor-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-finance-monitor-*.log",
@@ -1632,6 +1632,38 @@
             "claudeStderr": {
               "pattern": "claude-stderr-record-daily-*.log",
               "exists": true
+            }
+          }
+        },
+        {
+          "id": "session-summaries-rotate",
+          "name": "session-summaries 자동 회전 (AUP refusal 재발 방지)",
+          "schedule": "30 3 * * *",
+          "scheduleHuman": "매일 03:30",
+          "type": "script",
+          "handler": "session-summaries-rotate.sh",
+          "team": {
+            "id": "record-lead",
+            "name": "데이터실 (메모리·RAG 백엔드)"
+          },
+          "discordChannel": null,
+          "model": null,
+          "priority": "daily",
+          "maxBudget": "0",
+          "disabled": false,
+          "description": "2026-04-23 AUP refusal 반복 사고(injectedSummary 누적) 재발 방지. 7일 TTL + 8KB size cap으로 session-summaries 회전. 매일 03:30 KST.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/session-summaries-rotate.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/session-summaries-rotate-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-session-summaries-rotate-*.log",
+              "exists": false
             }
           }
         },
@@ -2395,7 +2427,7 @@
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/legacy-plist-audit-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-legacy-plist-audit-*.log",
@@ -2732,38 +2764,6 @@
           }
         },
         {
-          "id": "auto-diagnose",
-          "name": "자동 실패 진단",
-          "schedule": null,
-          "scheduleHuman": "(none)",
-          "type": "script",
-          "handler": "auto-diagnose.sh",
-          "team": {
-            "id": "secretary",
-            "name": "컨시어지 (Discord 봇)"
-          },
-          "discordChannel": "jarvis-system",
-          "model": null,
-          "priority": null,
-          "maxBudget": "0",
-          "disabled": false,
-          "description": null,
-          "logs": {
-            "stdout": {
-              "path": "~/jarvis/runtime/logs/auto-diagnose.log",
-              "exists": false
-            },
-            "stderr": {
-              "path": "~/jarvis/runtime/logs/auto-diagnose-err.log",
-              "exists": false
-            },
-            "claudeStderr": {
-              "pattern": "claude-stderr-auto-diagnose-*.log",
-              "exists": false
-            }
-          }
-        },
-        {
           "id": "bot-quality-check",
           "name": "봇 응답 품질 분석",
           "schedule": "30 2 * * *",
@@ -2847,11 +2847,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/dev-event-bus.log",
-              "exists": true
+              "exists": false
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/dev-event-bus-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-dev-event-bus-*.log",
@@ -2879,11 +2879,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/dev-event-watcher.log",
-              "exists": true
+              "exists": false
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/dev-event-watcher-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-dev-event-watcher-*.log",
@@ -2919,38 +2919,6 @@
             },
             "claudeStderr": {
               "pattern": "claude-stderr-dev-runner-*.log",
-              "exists": false
-            }
-          }
-        },
-        {
-          "id": "jarvis-coder",
-          "name": "자비스 코더 (온디맨드)",
-          "schedule": null,
-          "scheduleHuman": "(none)",
-          "type": "script",
-          "handler": "jarvis-coder.sh",
-          "team": {
-            "id": "secretary",
-            "name": "컨시어지 (Discord 봇)"
-          },
-          "discordChannel": "jarvis-system",
-          "model": null,
-          "priority": "normal",
-          "maxBudget": "0",
-          "disabled": false,
-          "description": null,
-          "logs": {
-            "stdout": {
-              "path": "~/jarvis/runtime/logs/jarvis-coder.log",
-              "exists": true
-            },
-            "stderr": {
-              "path": "~/jarvis/runtime/logs/jarvis-coder-err.log",
-              "exists": false
-            },
-            "claudeStderr": {
-              "pattern": "claude-stderr-jarvis-coder-*.log",
               "exists": false
             }
           }
@@ -3079,11 +3047,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/boram-daily-schedule.log",
-              "exists": true
+              "exists": false
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/boram-daily-schedule-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-boram-daily-schedule-*.log",
@@ -3239,11 +3207,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/cron-sync-hourly.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/cron-sync-hourly-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-cron-sync-hourly-*.log",
@@ -3403,7 +3371,7 @@
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/kakao-token-refresh-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-kakao-token-refresh-*.log",
@@ -3463,11 +3431,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/plist-bypass-autofix.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/plist-bypass-autofix-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-plist-bypass-autofix-*.log",
