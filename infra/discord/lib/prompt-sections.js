@@ -146,11 +146,17 @@ export function buildUserContextSection({ activeUserProfile, ownerName, ownerTit
  * Injected alongside preferences so all behavioural rules survive session resets.
  */
 export function buildOwnerPersonaSection({ botHome }) {
+  const personaPath = join(botHome, 'context', 'owner', 'persona.md');
   try {
-    const content = readFileSync(join(botHome, 'context', 'owner', 'persona.md'), 'utf-8');
-    if (!content.trim()) return '';
+    const content = readFileSync(personaPath, 'utf-8');
+    if (!content.trim()) {
+      console.error(`[persona] WARN: ${personaPath} 비어있음 — 페르소나 가드 미주입`);
+      return '';
+    }
     return `--- Owner Persona & Behaviour Rules (항상 준수) ---\n${content.trim()}`;
-  } catch {
+  } catch (e) {
+    // silent fail 재발 방지 (persona-integrity-audit.sh 검출 항목)
+    console.error(`[persona] FATAL: ${personaPath} 로드 실패 — ${e.message}. 페르소나 가드 없이 응답 생성됨.`);
     return '';
   }
 }
