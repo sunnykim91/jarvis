@@ -377,6 +377,20 @@ INDEX_FILE="$VAULT_BASE/05-insights/_index.md"
     fi
 } > "$INDEX_FILE" 2>/dev/null && synced=$((synced + 1)) || true
 
+# --- Interview Ralph curated archive 미러링 (2026-04-26 v4.35 신설) ---
+# ralph runner가 ~/jarvis/runtime/wiki/05-career/interview-curated/에 누적하는 모범답안 + 라운드 요약을
+# 안드로이드 옵시디언이 보는 ~/Jarvis-Vault/03-teams/career/interview-ralph/로 미러.
+RALPH_SRC="$BOT_HOME/wiki/05-career/interview-curated"
+RALPH_DEST="$VAULT_BASE/03-teams/career/interview-ralph"
+if [[ -d "$RALPH_SRC" ]]; then
+    mkdir -p "$RALPH_DEST"
+    for src_file in "$RALPH_SRC"/*.md; do
+        [[ -f "$src_file" ]] || continue
+        cp "$src_file" "$RALPH_DEST/$(basename "$src_file")" 2>/dev/null && synced=$((synced + 1)) || true
+    done
+    log "Ralph curated mirrored to $RALPH_DEST"
+fi
+
 # --- Auto-commit to git (if changes exist) ---
 if cd "$VAULT_BASE" && git diff --quiet && git diff --cached --quiet && [[ -z "$(git ls-files --others --exclude-standard)" ]]; then
     log "Git: no changes to commit"

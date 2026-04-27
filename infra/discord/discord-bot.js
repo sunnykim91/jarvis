@@ -361,9 +361,11 @@ client.once('clientReady', async () => {
       guilds: client.guilds?.cache?.size ?? 0,
     });
 
-    // OOM 사전 차단: 800MB 초과 시 깨끗하게 재시작 (OOM kill보다 낫다)
-    // watchdog MEMORY_WARN_MB=900 보다 낮게, compactSessionWithAI 스파이크 여유 확보
-    const MEM_LIMIT_MB = 800;
+    // OOM 사전 차단 (v4.44 2026-04-27 주인님 면접 중 938MB OOM 재시작 사고 — cap 정렬):
+    // 이전 800MB cap → watchdog 정책(WARN 900 / SOFT 1100 / CRITICAL 1400)과 충돌.
+    // 정상 운용(LanceDB 인덱스 + RAG 컨텍스트 + Claude 세션) 합산 800~1100MB에 쉽게 도달 → 면접 중 자가 재시작 = 흐름 절단.
+    // 신규 1300MB: watchdog SOFT(1100) 위 + CRITICAL(1400) 아래. watchdog SOFT 재시작이 우선 발동(조용한 재시작), 이 cap은 watchdog 실패 시 마지막 안전망.
+    const MEM_LIMIT_MB = 1300;
     if (memMB > MEM_LIMIT_MB) {
       log('error', `OOM threshold exceeded (${memMB}MB > ${MEM_LIMIT_MB}MB) — restarting cleanly`, { memMB });
       sendNtfy(`${BOT_NAME} OOM restart`, `메모리 ${memMB}MB 초과, 재시작`, 'high');

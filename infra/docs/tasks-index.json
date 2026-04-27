@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-25T21:17:05.440Z",
+  "generatedAt": "2026-04-26T21:17:05.517Z",
   "source": "~/jarvis/runtime/config/tasks.json",
   "totalTasks": 108,
   "teamDistribution": {
@@ -447,7 +447,7 @@
             },
             "claudeStderr": {
               "pattern": "claude-stderr-weekly-report-*.log",
-              "exists": false
+              "exists": true
             }
           }
         },
@@ -954,7 +954,7 @@
           "model": null,
           "priority": null,
           "maxBudget": null,
-          "disabled": true,
+          "disabled": false,
           "description": "Jarvis 자동 시스템 점검 (LaunchAgent, Discord봇, RAG, 크론, E2E, Glances, 디스크)",
           "logs": {
             "stdout": {
@@ -2135,11 +2135,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/bidirectional-audit.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/bidirectional-audit-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-bidirectional-audit-*.log",
@@ -3079,15 +3079,15 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/compound-review.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/compound-review-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-compound-review-*.log",
-              "exists": false
+              "exists": true
             }
           }
         },
@@ -3559,11 +3559,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/wiki-reference-report.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/wiki-reference-report-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-wiki-reference-report-*.log",

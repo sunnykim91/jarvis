@@ -37,6 +37,18 @@ mkdir -p "$LOG_DIR"
 
 # 기본 옵션 — incremental save로 중도 종료 안전
 DEFAULT_ARGS=(--apply-forbid --apply-insights --include-followups --include-misses --per-gap 5000 --incremental-every 5)
+
+# v4.47 (2026-04-27): INTERVIEW_ACTIVE_SCENARIO env 자동 감지 → --scenario 자동 추가.
+# .env에 시나리오 명시되어 있으면 ralph도 자동으로 회사 시나리오 모드 가동.
+# 사용자 명시 --scenario는 USER_ARGS가 우선 (덮어쓰기 가능).
+if [ -f "$HOME/jarvis/runtime/.env" ]; then
+  ACTIVE_SCN=$(grep -E "^INTERVIEW_ACTIVE_SCENARIO=" "$HOME/jarvis/runtime/.env" | cut -d= -f2 | tr -d '"' | tr -d "'" | head -1)
+  if [ -n "${ACTIVE_SCN:-}" ]; then
+    DEFAULT_ARGS+=(--scenario "$ACTIVE_SCN")
+    echo "🎯 active scenario 감지: $ACTIVE_SCN (시나리오 모드 자동 활성)"
+  fi
+fi
+
 USER_ARGS=("$@")
 
 echo "🚀 ralph detached 시동..."
