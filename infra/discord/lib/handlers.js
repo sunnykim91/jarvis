@@ -975,32 +975,30 @@ async function _processBatch(messages, { sessions, rateTracker, semaphore, activ
       const recentSummary = loadSessionSummaryRecent(sessionKey);
       const summary = recentSummary || loadSessionSummary(sessionKey); // recent 실패 시 전체 fallback
 
-      if (!pending && !summary) {
-        // 이어받을 작업도, 세션 요약도 없음 → 안내만 하고 종료
-        if (typingInterval) clearInterval(typingInterval);
-        typingInterval = null;
-        await message.reply('이어받을 작업이 없습니다. 새로운 질문이나 지시를 입력해주세요.');
-        log('info', 'Continue requested but no pending task or session summary found', { threadId: thread.id, sessionKey });
-        return;
+      if (pending || summary) {
+        // 컨텍스트 블록 조립: 세션 요약 + pending task 순서로 주입
+        const contextParts = [];
+        if (summary) {
+          contextParts.push(summary.trimEnd());
+          log('info', 'Session summary injected for 계속 resume', { threadId: thread.id });
+        }
+        if (pending) {
+          const checkpointLines = (pending.checkpoints ?? []).length > 0
+            ? '\n이미 완료된 단계:\n' + pending.checkpoints.map((c, i) => `  ${i + 1}. ${c}`).join('\n')
+            : '';
+          contextParts.push(`## 중단된 작업\n타임아웃으로 중단된 작업입니다. 아래 원래 요청을 이어서 완료해줘.\n원래 요청: "${pending.prompt}"${checkpointLines}`);
+          _clearPendingTask(sessionKey);
+          log('info', 'Pending task resumed via 계속', { threadId: thread.id, pendingLen: pending.prompt.length, checkpoints: pending.checkpoints?.length ?? 0 });
+        }
+        // 프롬프트 앞에 컨텍스트 주입 (세션 요약 → pending task → 유저 원문 순)
+        userPrompt = contextParts.join('\n\n') + '\n\n' + '위 맥락을 바탕으로 중단된 작업을 이어서 진행해줘.';
+        _continueHandled = true; // 아래 세션 요약 재주입 방지
+      } else {
+        // 2026-04-26 수정: pending·summary 없어도 fallback 메시지 대신 fall-through.
+        // "계속"을 일반 처리 흐름으로 통과시켜 Claude가 직전 대화 컨텍스트를 보고 응답하도록.
+        // 이전 동작: '이어받을 작업이 없습니다' fallback + return → Claude 진입 차단 → continuity-signal hook 무력화.
+        log('info', 'Continue without pending/summary — fall through to default Claude flow', { threadId: thread.id, sessionKey });
       }
-
-      // 컨텍스트 블록 조립: 세션 요약 + pending task 순서로 주입
-      const contextParts = [];
-      if (summary) {
-        contextParts.push(summary.trimEnd());
-        log('info', 'Session summary injected for 계속 resume', { threadId: thread.id });
-      }
-      if (pending) {
-        const checkpointLines = (pending.checkpoints ?? []).length > 0
-          ? '\n이미 완료된 단계:\n' + pending.checkpoints.map((c, i) => `  ${i + 1}. ${c}`).join('\n')
-          : '';
-        contextParts.push(`## 중단된 작업\n타임아웃으로 중단된 작업입니다. 아래 원래 요청을 이어서 완료해줘.\n원래 요청: "${pending.prompt}"${checkpointLines}`);
-        _clearPendingTask(sessionKey);
-        log('info', 'Pending task resumed via 계속', { threadId: thread.id, pendingLen: pending.prompt.length, checkpoints: pending.checkpoints?.length ?? 0 });
-      }
-      // 프롬프트 앞에 컨텍스트 주입 (세션 요약 → pending task → 유저 원문 순)
-      userPrompt = contextParts.join('\n\n') + '\n\n' + '위 맥락을 바탕으로 중단된 작업을 이어서 진행해줘.';
-      _continueHandled = true; // 아래 세션 요약 재주입 방지
     }
 
     const hasImages = messages.some((m) =>
@@ -1040,6 +1038,55 @@ async function _processBatch(messages, { sessions, rateTracker, semaphore, activ
     // 세션/스킬/MCP 전부 skip — personas.json의 jarvis-interview 페르소나 + RAG만으로 답변.
     if (message.channel.id === INTERVIEW_CHANNEL_ID) {
       clearInterval(typingInterval);
+
+      // v4.36 (2026-04-26) Ralph 메타 명령 인터셉트 — fast-path 진입 전.
+      // 가드: bot/webhook 메시지 무시 (무한 루프 방지), 정확 매칭만 (오탐 차단).
+      const isAuthorBot = message.author.bot || message.webhookId;
+      const trimmed = (userPrompt || '').trim();
+      if (!isAuthorBot) {
+        const isRalphStart = /^(랄프|ralph)\s*(켜|시작|start|on)$/i.test(trimmed);
+        const isRalphStop = /^(랄프|ralph)\s*(꺼|중단|종료|stop|off)$/i.test(trimmed);
+        const isRalphStatus = /^(랄프|ralph)\s*(상태|status)$/i.test(trimmed);
+        if (isRalphStart || isRalphStop || isRalphStatus) {
+          const { execFile } = await import('node:child_process');
+          const { promisify } = await import('node:util');
+          const exec = promisify(execFile);
+          const home = process.env.HOME || '/Users/ramsbaby';
+          try {
+            if (isRalphStart) {
+              const { stdout: pgrepOut } = await exec('pgrep', ['-f', 'interview-ralph-runner']).catch(() => ({ stdout: '' }));
+              if (pgrepOut.trim()) {
+                await message.reply(`⚠️ Ralph 이미 가동 중 (PID: ${pgrepOut.trim().split('\n').join(', ')}).\n중복 시동 차단했습니다. 끄려면 \`랄프 꺼\`.`);
+              } else {
+                const { stdout, stderr } = await exec('bash', [`${home}/jarvis/runtime/scripts/interview-ralph-start.sh`, '--round', '9', '--limit', '24']).catch(e => ({ stdout: '', stderr: e.message || String(e) }));
+                const pidMatch = stdout.match(/PID\s+(\d+)/);
+                const pid = pidMatch ? pidMatch[1] : '?';
+                await message.reply(`🚀 **Ralph 시동 완료** — PID ${pid}, 라운드 9, 24문항 풀.\n• 진행: 약 50~70분 [검증 필요 — 실측 라운드별 분포 41~186초/문항]\n• 모니터: \`tail -f ~/jarvis/runtime/logs/interview-ralph-detached.log\`\n• 종료: 이 채널에 \`랄프 꺼\``);
+              }
+            } else if (isRalphStop) {
+              const { stdout } = await exec('bash', [`${home}/jarvis/runtime/scripts/interview-ralph-stop.sh`, '--disable']).catch(e => ({ stdout: e.message || String(e) }));
+              const lastLines = stdout.split('\n').slice(-8).join('\n');
+              await message.reply(`🛑 **Ralph 정지 완료** (LaunchAgent 자동 부활 차단됨)\n\`\`\`\n${lastLines.slice(0, 1500)}\n\`\`\``);
+            } else if (isRalphStatus) {
+              const { stdout: pgrepOut } = await exec('pgrep', ['-af', 'interview-ralph-runner']).catch(() => ({ stdout: '' }));
+              const status = pgrepOut.trim() ? `🔴 가동 중\n\`\`\`\n${pgrepOut.trim().slice(0, 800)}\n\`\`\`` : '🟢 정지';
+              const { stdout: insightsRaw } = await exec('cat', [`${home}/jarvis/runtime/state/ralph-insights-block.json`]).catch(() => ({ stdout: '{}' }));
+              let summary = '';
+              try {
+                const data = JSON.parse(insightsRaw);
+                summary = `\n📊 누적 학습 (라운드 ${data.round || '?'})\n• ssotIssues: ${(data.ssotIssues || []).length}건\n• ssotIssuesByStar: ${Object.keys(data.ssotIssuesByStar || {}).length}개 STAR\n• aiTone: ${(data.aiTone || []).length}건\n• detailGaps: ${(data.detailGaps || []).length}건`;
+              } catch { /* ignore */ }
+              await message.reply(`📍 **Ralph 상태**\n${status}${summary}`);
+            }
+          } catch (err) {
+            log('error', 'ralph meta-command failed', { error: err.message });
+            await message.reply(`❌ Ralph 명령 실패: ${err.message.slice(0, 200)}`);
+          }
+          processingMsgIds.delete(message.id);
+          return;
+        }
+      }
+
       const { runInterviewFastPath } = await import('./interview-fast-path.js');
       try {
         await runInterviewFastPath({ message, userInput: userPrompt });
@@ -1955,7 +2002,13 @@ ${ragContextBlock}
 사용자가 카드 지정 안 하면 질문 취지에 가장 맞는 카드 선택. 바로 답변 생성 시작.`;
     }
 
-    if (chName === INTERVIEW_CHANNEL && hasInterviewPattern && !hasSkillTrigger && !mockActive) {
+    // v4.39 (2026-04-27 주인님 지시): 면접 전형 질문 가드 영구 비활성.
+    // 배경: env INTERVIEW_CHANNEL 설정 채널에서 면접 패턴 감지 시 가드 발동되어 안내 메시지 송출되던 사고. 사용자 의도와 정반대.
+    // 사용자 의도: 면접 전용 채널만 자동 답변, 그 외 모든 채널은 가드 발동 X (일반 응답 흐름 유지).
+    // 처방: 면접 전용 채널은 INTERVIEW_CHANNEL 매칭 안 되므로 어차피 자유 응답.
+    //       그 외 채널의 면접 패턴 감지 가드는 false로 영구 차단.
+    // 복구 방법: 아래 false를 chName === INTERVIEW_CHANNEL로 되돌림 (단 사용자 명시 결재 후).
+    if (false && chName === INTERVIEW_CHANNEL && hasInterviewPattern && !hasSkillTrigger && !mockActive) {
       const guardMsg = `🎤 면접 전형 질문 감지됨.\n\n이 채널은 일반 커리어 상담 채널이라 자동으로 1인칭 면접 답변을 만들지 않습니다 (할루시네이션 방지).\n\n**모의면접 답변 만들려면:**\n\`/mock-interview 삼성물산\` (슬래시 커맨드)\n또는 \`면접 연습해줘: 조직 실수 경험 질문\` (자연어)\n\n**그냥 질문 자체에 대한 상담이면:** "상담 모드로 답해줘"라고 덧붙여 주세요.`;
       await message.reply(guardMsg).catch(() => message.channel.send(guardMsg));
       await streamer.finalize();
