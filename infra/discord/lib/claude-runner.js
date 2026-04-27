@@ -1331,7 +1331,8 @@ section_count: ${sections.length}
 prompt_chars: ${(effectivePrompt || '').length}
 user_id: ${userId || 'n/a'}
 channel_id: ${channelId || 'n/a'}
-session_key: ${sessionKey || 'n/a'}
+session_id: ${sessionId || 'n/a'}
+thread_id: ${threadId || 'n/a'}
 
 ---
 
