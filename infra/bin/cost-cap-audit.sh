@@ -33,12 +33,27 @@ fi
 log "=== Cost Cap Audit start ==="
 
 # 1. 캡 부재(null) 또는 캡=0인 task 수집
+# script-only 화이트리스트: prompt가 ~/jarvis/infra/bin/*.sh, ~/.jarvis/scripts/*.sh  # ALLOW-DOTJARVIS 등
+# 직접 스크립트 실행 패턴이면 LLM 비용 없으므로 maxBudget="0.00" 허용.
+SCRIPT_ONLY_PATTERN='(~/jarvis/infra/bin/|~/\.jarvis/scripts/|/infra/bin/[^ ]*\.sh|/scripts/[^ ]*\.sh)'
+
 NO_CAP=$(jq '[.tasks[] | select(.maxBudget == null)] | length' "$TASKS_JSON")
-ZERO_CAP=$(jq '[.tasks[] | select((.maxBudget | tostring | tonumber? // null) == 0)] | length' "$TASKS_JSON")
+ZERO_CAP=$(jq --arg p "$SCRIPT_ONLY_PATTERN" '
+  [.tasks[]
+    | select((.maxBudget | tostring | tonumber? // null) == 0)
+    | select((.prompt // "") | test($p) | not)
+  ] | length
+' "$TASKS_JSON")
 TOTAL=$(jq '.tasks | length' "$TASKS_JSON")
 
 NO_CAP_IDS=$(jq -r '[.tasks[] | select(.maxBudget == null) | .id] | join(", ")' "$TASKS_JSON")
-ZERO_CAP_IDS=$(jq -r '[.tasks[] | select((.maxBudget | tostring | tonumber? // null) == 0) | .id] | join(", ")' "$TASKS_JSON")
+ZERO_CAP_IDS=$(jq -r --arg p "$SCRIPT_ONLY_PATTERN" '
+  [.tasks[]
+    | select((.maxBudget | tostring | tonumber? // null) == 0)
+    | select((.prompt // "") | test($p) | not)
+    | .id
+  ] | join(", ")
+' "$TASKS_JSON")
 
 log "총 task: $TOTAL / 캡 부재: $NO_CAP / 캡=0: $ZERO_CAP"
 
