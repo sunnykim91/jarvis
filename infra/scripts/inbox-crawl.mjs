@@ -18,7 +18,20 @@ const BOT_HOME = process.env.BOT_HOME || join(homedir(), 'jarvis/runtime');
 const RESULT_DIR = join(BOT_HOME, 'state', 'inbox');
 const RESULT_FILE = join(RESULT_DIR, 'latest.json');
 const SEEN_FILE = join(RESULT_DIR, 'seen.json');
-const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+// 크로스플랫폼 Chrome 경로 자동 감지
+function detectChromePath() {
+  if (process.platform === 'win32') {
+    const paths = [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    ];
+    for (const p of paths) { try { if (existsSync(p)) return p; } catch {} }
+    return paths[0];
+  }
+  if (process.platform === 'linux') return '/usr/bin/google-chrome';
+  return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+}
+const CHROME_PATH = detectChromePath();
 const sendToDiscord = process.argv.includes('--discord');
 const jsonOnly = process.argv.includes('--json-only');
 
@@ -27,7 +40,10 @@ mkdirSync(RESULT_DIR, { recursive: true });
 // ─── 대상 사이트 (private/config 분리 — PII 격리) ──────────────────────────
 // SSoT: ~/jarvis/private/config/inbox-targets.json (gitignored)
 // 파일 없으면 크롤링 0건 graceful fallback — OSS 사용자는 본인 타겟을 여기에 정의
-const TARGETS_PATH = join(homedir(), 'jarvis', 'private', 'config', 'inbox-targets.json');
+// BOT_HOME 기준으로 먼저 찾고, 없으면 ~/jarvis fallback
+const TARGETS_PATH = existsSync(join(BOT_HOME, 'private', 'config', 'inbox-targets.json'))
+  ? join(BOT_HOME, 'private', 'config', 'inbox-targets.json')
+  : join(homedir(), 'jarvis', 'private', 'config', 'inbox-targets.json');
 let SITES = [];
 let GREETINGHR_SITES = [];
 let NINEHIRE_SITES = [];
@@ -52,29 +68,30 @@ try {
 }
 
 // ── 키워드 ─────────────────────────────────────────────────────────────────
-const BACKEND_KW = [
-  'java', 'spring', '백엔드', 'backend', '서버 개발', '서버개발',
-  'springboot', 'webflux', 'jvm', 'msa', 'microservice', '마이크로서비스',
-  'server 엔지니어', 'platform engineer', '플랫폼 개발',
-  '서버 엔지니어', '서버엔지니어', '서버개발자', '서버 개발자',
-  'kotlin', 'golang', 'go 언어', 'node.js', 'nodejs', 'python',
-  '시스템 개발', '시스템개발', 'api 개발', '클라우드 엔지니어',
+// 프론트엔드 포지션 키워드 필터 (오너: 써니님)
+const FRONTEND_KW = [
+  '프론트엔드', 'frontend', 'front-end', 'front end',
+  'react', 'vue', 'next.js', 'nextjs', 'nuxt',
+  'typescript', '웹 개발자', '웹개발자', 'web developer',
+  'ui 개발', 'ui개발', '웹 퍼블리셔',
 ];
 const EXCLUDE_KW = [
   '석사', '박사', 'phd', '석·박사', '석박사',
-  '연구원', 'research engineer', 'research scientist', 'researcher',
-  '프론트엔드', 'frontend', 'front-end',
-  'ios', 'android', '모바일 앱',
-  'data scientist', 'ml engineer', 'machine learning engineer',
-  '디자이너', 'designer', 'devrel', '기술영업', '솔루션즈 아키텍트',
+  '연구원', 'research engineer', 'research scientist',
+  'ios', 'android', '모바일 앱', '앱 개발',
+  'data scientist', 'ml engineer', 'machine learning',
+  '디자이너', 'designer', 'devrel', '기술영업',
+  '백엔드', 'backend', 'back-end', 'java developer', 'spring developer',
 ];
 
-function isBackendJob(title) {
+function isFrontendJob(title) {
   if (!title) return false;
   const lower = title.toLowerCase();
   if (EXCLUDE_KW.some(k => lower.includes(k.toLowerCase()))) return false;
-  return BACKEND_KW.some(k => lower.includes(k.toLowerCase()));
+  return FRONTEND_KW.some(k => lower.includes(k.toLowerCase()));
 }
+// 하위 호환: 기존 코드가 isBackendJob 참조하는 경우 대응
+const isBackendJob = isFrontendJob;
 
 function makeId(str) {
   let hash = 0;
@@ -368,7 +385,7 @@ async function main() {
     const byCompany = new Map();
     for (const j of backend) byCompany.set(j.company, (byCompany.get(j.company) || 0) + 1);
     siteResults.push({ company: `원티드 (${byCompany.size}개사)`, total: jobs.length, backend: backend.length, new: newJobs.length });
-    console.log(`  ✅ 원티드: 전체 ${jobs.length}건 (백엔드 ${backend.length}건 / ${byCompany.size}개사, 신규 ${newJobs.length})`);
+    console.log(`  ✅ 원티드: 전체 ${jobs.length}건 (프론트엔드 ${backend.length}건 / ${byCompany.size}개사, 신규 ${newJobs.length})`);
   }
 
   // LinkedIn 어그리게이터 (글로벌·대기업급 커버)
@@ -380,7 +397,7 @@ async function main() {
     const byCompany = new Map();
     for (const j of backend) byCompany.set(j.company, (byCompany.get(j.company) || 0) + 1);
     siteResults.push({ company: `LinkedIn (${byCompany.size}개사)`, total: jobs.length, backend: backend.length, new: newJobs.length });
-    console.log(`  ✅ LinkedIn: 전체 ${jobs.length}건 (백엔드 ${backend.length}건 / ${byCompany.size}개사, 신규 ${newJobs.length})`);
+    console.log(`  ✅ LinkedIn: 전체 ${jobs.length}건 (프론트엔드 ${backend.length}건 / ${byCompany.size}개사, 신규 ${newJobs.length})`);
   }
 
   // Jumpit 어그리게이터 (IT 전문, ~175건 백엔드)
@@ -392,7 +409,7 @@ async function main() {
     const byCompany = new Map();
     for (const j of jobs) byCompany.set(j.company, (byCompany.get(j.company) || 0) + 1);
     siteResults.push({ company: `점핏 (${byCompany.size}개사)`, total: jobs.length, backend: jobs.length, new: newJobs.length });
-    console.log(`  ✅ 점핏: 전체 ${jobs.length}건 (백엔드 ${jobs.length}건 / ${byCompany.size}개사, 신규 ${newJobs.length})`);
+    console.log(`  ✅ 점핏: 전체 ${jobs.length}건 (프론트엔드 ${jobs.length}건 / ${byCompany.size}개사, 신규 ${newJobs.length})`);
   }
 
   for (const site of GREETINGHR_SITES) {
@@ -450,7 +467,7 @@ async function main() {
     siteResults,
   };
   writeFileSync(RESULT_FILE, JSON.stringify(result, null, 2));
-  console.log(`\n📊 결과: 백엔드 ${result.totalBackend}건 (신규 ${result.totalNew}건)`);
+  console.log(`\n📊 결과: 프론트엔드 ${result.totalBackend}건 (신규 ${result.totalNew}건)`);
   console.log(`💾 저장: ${RESULT_FILE}`);
 
   // Discord 전송
@@ -458,10 +475,10 @@ async function main() {
     const lines = siteResults.map(r => {
       if (r.total < 0) return `- ❌ ${r.company}: 오류`;
       if (r.total === 0) return `- ⚠️ ${r.company}: 0건`;
-      if (r.new === 0) return `- 🔵 ${r.company}: ${r.total}건 (백엔드 ${r.backend}), 신규 없음`;
-      return `- ✅ ${r.company}: ${r.total}건 (백엔드 ${r.backend}), 🆕 ${r.new}건`;
+      if (r.new === 0) return `- 🔵 ${r.company}: ${r.total}건 (프론트엔드 ${r.backend}), 신규 없음`;
+      return `- ✅ ${r.company}: ${r.total}건 (프론트엔드 ${r.backend}), 🆕 ${r.new}건`;
     });
-    await sendDiscordMsg(`🤖 **크롤링 완료** (${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })})\n백엔드 매칭: **${result.totalBackend}건** (🆕 신규 ${result.totalNew}건)\n\n${lines.join('\n')}`);
+    await sendDiscordMsg(`🤖 **크롤링 완료** (${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })})\n프론트엔드 매칭: **${result.totalBackend}건** (🆕 신규 ${result.totalNew}건)\n\n${lines.join('\n')}`);
   }
 }
 
