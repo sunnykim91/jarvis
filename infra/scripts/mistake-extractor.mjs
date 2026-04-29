@@ -41,7 +41,9 @@ const STATE_FILE    = join(BOT_HOME, 'state', 'mistake-extractor-state.json');
 const CLAUDE_BIN       = process.env.CLAUDE_BINARY || join(HOME, '.local/bin/claude');
 const MAX_FILES_PER_RUN = 5;     // 세션 파일 상한
 const MAX_MISTAKES_PER_RUN = 5;  // 추출 건 상한
-const MIN_FILE_BYTES   = 300;    // 이보다 작은 요약은 스킵
+// Discord turn은 짧으므로 cutoff 완화 (Harness P0 verify R6 지적).
+// CLI Stop 훅 / batch는 기존 300 유지, Discord turn만 100으로 완화.
+const MIN_FILE_BYTES   = process.env.DISCORD_TURN_SOURCE === '1' ? 100 : 300;
 const DUPLICATE_THRESHOLD = 0.4; // 기존 패턴과 유사도 이상이면 skip (Verify P3 지적에 따라 0.65→0.4 하향)
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -149,7 +151,9 @@ function withLock(lockPath, fn) {
 // ── 예산 강제 차단 (Verify 4회차 P0-2 — max_budget_usd 메타필드만은 무의미 해소) ──
 // 오늘 누적 cost_usd >= BUDGET_DAILY_USD 면 callClaude 호출 자체 차단.
 // 환경변수 MISTAKE_EXTRACTOR_BUDGET 로 override.
-const BUDGET_DAILY_USD = Number(process.env.MISTAKE_EXTRACTOR_BUDGET || 0.10);
+// 2026-04-26 상향: 0.10 → 0.50 (SINGLE_FILE 트리거가 자주 호출돼 어제·오늘 모두 16:22 이전 차단됨)
+// Haiku-4.5 기준 일 50건+ 처리 가능 = 학습 흐름 정상화. env MISTAKE_EXTRACTOR_BUDGET로 추가 override 가능.
+const BUDGET_DAILY_USD = Number(process.env.MISTAKE_EXTRACTOR_BUDGET || 0.50);
 function budgetCheck() {
   try {
     const ledgerFile = join(homedir(), 'jarvis/runtime/state/token-ledger.jsonl');
@@ -690,13 +694,17 @@ async function main() {
       process.exit(1);
     }
 
-    // Ledger append (SSoT: 배치/Stop훅/oops 세 진입점 공통 감사 트레일)
-    // append-only JSONL — 주간 감사가 이 원장을 읽어 "반복 패턴"·"진입점별 정확도" 분석
+    // Ledger append (SSoT: 배치/Stop훅/Discord-turn/oops 네 진입점 공통 감사 트레일)
+    // append-only JSONL — 주간 감사가 이 원장을 읽어 "표면별 학습 격차"·"진입점별 정확도" 분석
+    // source 분리: stop-hook(CLI), discord-turn(디스코드 봇), batch-daily(03:15 KST 크론)
     try {
       const ledgerFile = join(BOT_HOME, 'state', 'mistake-ledger.jsonl');
+      const sourceTag = !SINGLE_FILE ? 'batch-daily'
+                      : process.env.DISCORD_TURN_SOURCE === '1' ? 'discord-turn'
+                      : 'stop-hook';
       const ledgerLine = JSON.stringify({
         ts: kstISO(),
-        source: SINGLE_FILE ? 'stop-hook' : 'batch-daily',
+        source: sourceTag,
         count: final.length,
         titles: final.map(m => (m.pattern || m.title || '(untitled)').slice(0, 80)),
         session_file: SINGLE_FILE || null,

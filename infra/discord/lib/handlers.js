@@ -12,6 +12,9 @@
  */
 
 import { BoundedMap } from './bounded-map.js';
+// v3.3 P0-D: interview-fast-path 모듈 eager import로 RAG warmup IIFE를 봇 기동 시 트리거.
+// dynamic import 시점(첫 질의)에 warmup하면 의미 없음 — 여기서 선행 실행.
+import './interview-fast-path.js';
 import { writeFileSync, rmSync, readFileSync, existsSync, renameSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { homedir } from 'node:os';
@@ -20,7 +23,9 @@ import { promisify } from 'node:util';
 import { createReadStream } from 'node:fs';
 const execFileAsync = promisify(execFile);
 
-// OpenAI Whisper (음성 인식)
+// OpenAI STT — gpt-4o-transcribe (2026-04 업그레이드, whisper-1 대체)
+// 한국어 정확도·레이턴시 모두 우위. prompt 파라미터로 면접 도메인 힌트 주입하여
+// 기술 용어(Spring, JPA, 트랜잭션 등) 오인식 방지.
 async function transcribeVoiceMessage(att) {
   try {
     const resp = await fetch(att.url);
@@ -29,15 +34,15 @@ async function transcribeVoiceMessage(att) {
     const oggPath = join('/tmp', `voice-${att.id}.ogg`);
     const mp3Path = join('/tmp', `voice-${att.id}.mp3`);
     writeFileSync(oggPath, buf);
-    // ogg → mp3 변환 (Whisper는 mp3/wav/m4a 선호)
     await execFileAsync('ffmpeg', ['-y', '-i', oggPath, '-q:a', '4', mp3Path]);
     rmSync(oggPath, { force: true });
     const { default: OpenAI } = await import('openai');
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const transcription = await openai.audio.transcriptions.create({
       file: createReadStream(mp3Path),
-      model: 'whisper-1',
+      model: 'gpt-4o-transcribe',
       language: 'ko',
+      prompt: '한국어 대화. 기술/면접 도메인 용어: Spring Boot, WebFlux, JPA, QueryDSL, Kafka, Redis, AWS, gRPC, 트랜잭션, 데드락, 인덱스, 락, 커넥션 풀, 마이크로서비스, Kubernetes, 아키텍처, 트레이드오프, STAR, KPI, OKR, 이력서, 포트폴리오.',
     });
     rmSync(mp3Path, { force: true });
     return transcription.text?.trim() || null;
@@ -57,7 +62,9 @@ import {
   autoExtractMemory,
   reloadUserProfiles,
   getUserProfile,
+  triggerDiscordMistakeExtract,
 } from './claude-runner.js';
+import { detectAnger, recordAngerSignal } from './anger-detector.mjs';
 import { appendFeed } from './channel-feed.js';
 import { generateCode, verifyCode } from './pairing.js';
 import { userMemory } from '../../lib/user-memory.mjs';
@@ -66,6 +73,7 @@ import { recordError } from './error-tracker.js';
 
 // Extracted modules
 import { PAST_REF_PATTERN, searchRagForContext } from './rag-helper.js';
+import { INTERVIEW_CHANNEL_ID } from './slash-proxy.js';
 import { saveSessionSummary, loadSessionSummary, loadSessionSummaryRecent, saveCompactionSummary, compactSessionWithAI } from './session-summary.js';
 // classifyBudget 미사용 — 전역 opusplan 모드 (claude-runner.js에서 항상 Opus+thinking:adaptive)
 import { pendingQueue, enqueue, processQueue } from './queue-processor.js';
@@ -969,32 +977,30 @@ async function _processBatch(messages, { sessions, rateTracker, semaphore, activ
       const recentSummary = loadSessionSummaryRecent(sessionKey);
       const summary = recentSummary || loadSessionSummary(sessionKey); // recent 실패 시 전체 fallback
 
-      if (!pending && !summary) {
-        // 이어받을 작업도, 세션 요약도 없음 → 안내만 하고 종료
-        if (typingInterval) clearInterval(typingInterval);
-        typingInterval = null;
-        await message.reply('이어받을 작업이 없습니다. 새로운 질문이나 지시를 입력해주세요.');
-        log('info', 'Continue requested but no pending task or session summary found', { threadId: thread.id, sessionKey });
-        return;
+      if (pending || summary) {
+        // 컨텍스트 블록 조립: 세션 요약 + pending task 순서로 주입
+        const contextParts = [];
+        if (summary) {
+          contextParts.push(summary.trimEnd());
+          log('info', 'Session summary injected for 계속 resume', { threadId: thread.id });
+        }
+        if (pending) {
+          const checkpointLines = (pending.checkpoints ?? []).length > 0
+            ? '\n이미 완료된 단계:\n' + pending.checkpoints.map((c, i) => `  ${i + 1}. ${c}`).join('\n')
+            : '';
+          contextParts.push(`## 중단된 작업\n타임아웃으로 중단된 작업입니다. 아래 원래 요청을 이어서 완료해줘.\n원래 요청: "${pending.prompt}"${checkpointLines}`);
+          _clearPendingTask(sessionKey);
+          log('info', 'Pending task resumed via 계속', { threadId: thread.id, pendingLen: pending.prompt.length, checkpoints: pending.checkpoints?.length ?? 0 });
+        }
+        // 프롬프트 앞에 컨텍스트 주입 (세션 요약 → pending task → 유저 원문 순)
+        userPrompt = contextParts.join('\n\n') + '\n\n' + '위 맥락을 바탕으로 중단된 작업을 이어서 진행해줘.';
+        _continueHandled = true; // 아래 세션 요약 재주입 방지
+      } else {
+        // 2026-04-26 수정: pending·summary 없어도 fallback 메시지 대신 fall-through.
+        // "계속"을 일반 처리 흐름으로 통과시켜 Claude가 직전 대화 컨텍스트를 보고 응답하도록.
+        // 이전 동작: '이어받을 작업이 없습니다' fallback + return → Claude 진입 차단 → continuity-signal hook 무력화.
+        log('info', 'Continue without pending/summary — fall through to default Claude flow', { threadId: thread.id, sessionKey });
       }
-
-      // 컨텍스트 블록 조립: 세션 요약 + pending task 순서로 주입
-      const contextParts = [];
-      if (summary) {
-        contextParts.push(summary.trimEnd());
-        log('info', 'Session summary injected for 계속 resume', { threadId: thread.id });
-      }
-      if (pending) {
-        const checkpointLines = (pending.checkpoints ?? []).length > 0
-          ? '\n이미 완료된 단계:\n' + pending.checkpoints.map((c, i) => `  ${i + 1}. ${c}`).join('\n')
-          : '';
-        contextParts.push(`## 중단된 작업\n타임아웃으로 중단된 작업입니다. 아래 원래 요청을 이어서 완료해줘.\n원래 요청: "${pending.prompt}"${checkpointLines}`);
-        _clearPendingTask(sessionKey);
-        log('info', 'Pending task resumed via 계속', { threadId: thread.id, pendingLen: pending.prompt.length, checkpoints: pending.checkpoints?.length ?? 0 });
-      }
-      // 프롬프트 앞에 컨텍스트 주입 (세션 요약 → pending task → 유저 원문 순)
-      userPrompt = contextParts.join('\n\n') + '\n\n' + '위 맥락을 바탕으로 중단된 작업을 이어서 진행해줘.';
-      _continueHandled = true; // 아래 세션 요약 재주입 방지
     }
 
     const hasImages = messages.some((m) =>
@@ -1028,6 +1034,77 @@ async function _processBatch(messages, { sessions, rateTracker, semaphore, activ
       }
     }
 
+    // [2026-04-24] #jarvis-interview 채널 fast-path — claude-agent-sdk 우회.
+    // claude-agent-sdk의 Claude Code CLI subprocess spawn 오버헤드(60초+)를 회피하기 위해
+    // 해당 채널만 OpenAI gpt-4o-mini 직접 호출로 5초 이내 응답 보장.
+    // 세션/스킬/MCP 전부 skip — personas.json의 jarvis-interview 페르소나 + RAG만으로 답변.
+    if (message.channel.id === INTERVIEW_CHANNEL_ID) {
+      clearInterval(typingInterval);
+
+      // v4.36 (2026-04-26) Ralph 메타 명령 인터셉트 — fast-path 진입 전.
+      // 가드: bot/webhook 메시지 무시 (무한 루프 방지), 정확 매칭만 (오탐 차단).
+      const isAuthorBot = message.author.bot || message.webhookId;
+      const trimmed = (userPrompt || '').trim();
+      if (!isAuthorBot) {
+        const isRalphStart = /^(랄프|ralph)\s*(켜|시작|start|on)$/i.test(trimmed);
+        const isRalphStop = /^(랄프|ralph)\s*(꺼|중단|종료|stop|off)$/i.test(trimmed);
+        const isRalphStatus = /^(랄프|ralph)\s*(상태|status)$/i.test(trimmed);
+        if (isRalphStart || isRalphStop || isRalphStatus) {
+          const { execFile } = await import('node:child_process');
+          const { promisify } = await import('node:util');
+          const exec = promisify(execFile);
+          const home = process.env.HOME || '/Users/ramsbaby';
+          try {
+            if (isRalphStart) {
+              const { stdout: pgrepOut } = await exec('pgrep', ['-f', 'interview-ralph-runner']).catch(() => ({ stdout: '' }));
+              if (pgrepOut.trim()) {
+                await message.reply(`⚠️ Ralph 이미 가동 중 (PID: ${pgrepOut.trim().split('\n').join(', ')}).\n중복 시동 차단했습니다. 끄려면 \`랄프 꺼\`.`);
+              } else {
+                const { stdout, stderr } = await exec('bash', [`${home}/jarvis/runtime/scripts/interview-ralph-start.sh`, '--round', '9', '--limit', '24']).catch(e => ({ stdout: '', stderr: e.message || String(e) }));
+                const pidMatch = stdout.match(/PID\s+(\d+)/);
+                const pid = pidMatch ? pidMatch[1] : '?';
+                await message.reply(`🚀 **Ralph 시동 완료** — PID ${pid}, 라운드 9, 24문항 풀.\n• 진행: 약 50~70분 [검증 필요 — 실측 라운드별 분포 41~186초/문항]\n• 모니터: \`tail -f ~/jarvis/runtime/logs/interview-ralph-detached.log\`\n• 종료: 이 채널에 \`랄프 꺼\``);
+              }
+            } else if (isRalphStop) {
+              const { stdout } = await exec('bash', [`${home}/jarvis/runtime/scripts/interview-ralph-stop.sh`, '--disable']).catch(e => ({ stdout: e.message || String(e) }));
+              const lastLines = stdout.split('\n').slice(-8).join('\n');
+              await message.reply(`🛑 **Ralph 정지 완료** (LaunchAgent 자동 부활 차단됨)\n\`\`\`\n${lastLines.slice(0, 1500)}\n\`\`\``);
+            } else if (isRalphStatus) {
+              const { stdout: pgrepOut } = await exec('pgrep', ['-af', 'interview-ralph-runner']).catch(() => ({ stdout: '' }));
+              const status = pgrepOut.trim() ? `🔴 가동 중\n\`\`\`\n${pgrepOut.trim().slice(0, 800)}\n\`\`\`` : '🟢 정지';
+              const { stdout: insightsRaw } = await exec('cat', [`${home}/jarvis/runtime/state/ralph-insights-block.json`]).catch(() => ({ stdout: '{}' }));
+              let summary = '';
+              try {
+                const data = JSON.parse(insightsRaw);
+                summary = `\n📊 누적 학습 (라운드 ${data.round || '?'})\n• ssotIssues: ${(data.ssotIssues || []).length}건\n• ssotIssuesByStar: ${Object.keys(data.ssotIssuesByStar || {}).length}개 STAR\n• aiTone: ${(data.aiTone || []).length}건\n• detailGaps: ${(data.detailGaps || []).length}건`;
+              } catch { /* ignore */ }
+              await message.reply(`📍 **Ralph 상태**\n${status}${summary}`);
+            }
+          } catch (err) {
+            log('error', 'ralph meta-command failed', { error: err.message });
+            await message.reply(`❌ Ralph 명령 실패: ${err.message.slice(0, 200)}`);
+          }
+          processingMsgIds.delete(message.id);
+          return;
+        }
+      }
+
+      const { runInterviewFastPath } = await import('./interview-fast-path.js');
+      try {
+        await runInterviewFastPath({ message, userInput: userPrompt });
+      } catch (err) {
+        log('error', 'interview-fast-path error', { error: err.message });
+      }
+      processingMsgIds.delete(message.id);
+      return;
+    }
+
+    // [2026-04-24] 첨부 영구 저장 경로 — /tmp 대신 state/attachments/YYYY-MM-DD/
+    // /tmp 는 OS 주기 정리 대상이라 분석 재시도 시 원본 유실. 영구 경로로 변경.
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const attachDir = join(_BOT_HOME, 'state', 'attachments', today);
+    mkdirSync(attachDir, { recursive: true });
+
     // Download image attachments from Discord CDN
     for (const [, att] of message.attachments) {
       const isImage = att.contentType?.startsWith('image/') ||
@@ -1043,10 +1120,10 @@ async function _processBatch(messages, { sessions, rateTracker, semaphore, activ
           extname(att.name ?? '.jpg').slice(1) || 'jpg';
         const safeName = (att.name ?? `image_${att.id}.${ext}`)
           .replace(/[^a-zA-Z0-9._-]/g, '_');
-        const localPath = join('/tmp', `claude-img-${att.id}.${ext}`);
+        const localPath = join(attachDir, `${att.id}_${safeName}`);
         writeFileSync(localPath, buf);
         imageAttachments.push({ localPath, safeName });
-        log('info', 'Downloaded attachment', { name: safeName, bytes: buf.length });
+        log('info', 'Downloaded attachment', { name: safeName, bytes: buf.length, path: localPath });
       } catch (err) {
         log('warn', 'Failed to download attachment', { id: att.id, error: err.message });
       }
@@ -1071,7 +1148,7 @@ async function _processBatch(messages, { sessions, rateTracker, semaphore, activ
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const contentLength = parseInt(resp.headers.get('content-length') ?? '0', 10);
         if (contentLength > MAX_TEXT_BYTES) {
-          await thread.send(`⚠️ 파일 "${fname}"이 너무 큽니다 (${(contentLength / 1024).toFixed(0)}KB, 최대 2MB).`);
+          await thread.send(`⚠️ 파일 "${fname}"이 너무 큽니다 (${(contentLength / 1024).toFixed(0)}KB, 최대 20MB).`);
           continue;
         }
         const buf = Buffer.from(await resp.arrayBuffer());
@@ -1079,16 +1156,21 @@ async function _processBatch(messages, { sessions, rateTracker, semaphore, activ
 
         if (isPdf) {
           // PDF → pdftotext 추출 시도, 실패 또는 빈 텍스트면 Claude Read 폴백
-          const pdfPath = join('/tmp', `claude-doc-${att.id}.pdf`);
+          // [2026-04-24] 영구 경로 사용: state/attachments/YYYY-MM-DD/{id}_{name}.pdf
+          const safeFname = fname.replace(/[^a-zA-Z0-9가-힣._-]/g, '_');
+          const pdfPath = join(attachDir, `${att.id}_${safeFname}`);
           writeFileSync(pdfPath, buf);
           let usedFallback = false;
           try {
             const { stdout } = await execFileAsync('/opt/homebrew/bin/pdftotext', [pdfPath, '-'], { maxBuffer: 20 * 1024 * 1024 });
             const extracted = stdout.trim();
             if (extracted) {
-              rmSync(pdfPath, { force: true });
+              // [2026-04-24] rmSync 제거 + 영구 경로 저장. 이미지 페이지 OCR 재확인·크로스체크 대비.
+              log('info', 'PDF 텍스트 추출 완료 — 원본 영구 보존', { path: pdfPath, extractedLen: extracted.length });
               userPrompt = `[첨부 PDF: ${fname}]
 ${extracted}
+
+[원본 PDF 경로: ${pdfPath} — 이미지 페이지 OCR 필요 시 Read 도구로 페이지별 확인 가능]
 
 ` + (userPrompt || '이 파일을 분석해주세요.');
             } else {
@@ -1588,6 +1670,47 @@ ${extracted}
             // 다음 턴에 pre-inject 되어 RAG·가드를 모두 우회하며 거짓 스토리 부활.
             if (chName !== INTERVIEW_CHANNEL) {
               saveSessionSummary(sessionKey, originalPrompt, lastAssistantText);
+              // P0 Surface Learning Equalization: turn 종료 시 mistake-extractor 비동기 fork.
+              // 디스코드 봇 학습 루프가 Claude Code CLI Stop 훅과 동등한 권한으로 작동.
+              try {
+                const sessionSummaryPath = join(_BOT_HOME, 'state', 'session-summaries',
+                  `${sessionKey.replace(/[^a-zA-Z0-9_-]/g, '_')}.md`);
+                triggerDiscordMistakeExtract(sessionSummaryPath);
+              } catch (e) {
+                log('debug', 'triggerDiscordMistakeExtract skipped', { error: e?.message });
+              }
+              // P2 Real-time Correction Detection: 사용자 분노 키워드 감지 → 즉시 등재 + 알림
+              try {
+                const ang = detectAnger(originalPrompt);
+                if (ang.matched) {
+                  recordAngerSignal({
+                    userId: effectiveAuthor.id,
+                    channelId: effectiveChannelId,
+                    keyword: ang.keyword,
+                    userText: originalPrompt,
+                    assistantText: lastAssistantText,
+                    sessionKey,
+                  }).catch((e) => log('debug', 'recordAngerSignal outer catch', { error: e?.message }));
+                }
+              } catch (e) {
+                log('debug', 'anger-detector skipped', { error: e?.message });
+              }
+
+              // 🛡️ 가드 #1 (2026-04-28): 자비스 응답 자체에 단정 표현이 있으면
+              //   사용자 분노가 없어도 anger-signals.jsonl에 기록 → 다음 turn에
+              //   "🚨 직전 정정" 헤더로 강제 주입되어 같은 단정 즉시 차단.
+              try {
+                const { recordSelfAssertiveSignal } = await import('./anger-detector.mjs');
+                recordSelfAssertiveSignal({
+                  userId: effectiveAuthor.id,
+                  channelId: effectiveChannelId,
+                  sessionKey,
+                  userText: originalPrompt,
+                  assistantText: lastAssistantText,
+                }).catch((e) => log('debug', 'self-assertive outer catch', { error: e?.message }));
+              } catch (e) {
+                log('debug', 'self-assertive skipped', { error: e?.message });
+              }
             }
             // 토큰 누적: result 이벤트의 usage.input_tokens (claude-runner.js에서 포워딩)
             const inputTokens = event.usage?.input_tokens ?? 0;
@@ -1764,7 +1887,8 @@ ${extracted}
     for (const [type, re] of Object.entries(QUESTION_TYPES)) {
       if (re.test(_rawInput)) { questionType = type; break; }
     }
-    const isInterviewQuestion = questionType !== 'generic' || /경험|답변|설명.*해|말해/.test(_rawInput);
+    // 면접 전용 채널(jarvis-interview)에서는 모든 질문을 면접 질문으로 간주 (generic 포함)
+    const isInterviewQuestion = chName === 'jarvis-interview' || questionType !== 'generic' || /경험|답변|설명.*해|말해/.test(_rawInput);
 
     if (mockActive && isInterviewQuestion) {
       const { getMockContext } = await import('./slash-proxy.js');
@@ -1921,7 +2045,13 @@ ${ragContextBlock}
 사용자가 카드 지정 안 하면 질문 취지에 가장 맞는 카드 선택. 바로 답변 생성 시작.`;
     }
 
-    if (chName === INTERVIEW_CHANNEL && hasInterviewPattern && !hasSkillTrigger && !mockActive) {
+    // v4.39 (2026-04-27 주인님 지시): 면접 전형 질문 가드 영구 비활성.
+    // 배경: env INTERVIEW_CHANNEL 설정 채널에서 면접 패턴 감지 시 가드 발동되어 안내 메시지 송출되던 사고. 사용자 의도와 정반대.
+    // 사용자 의도: 면접 전용 채널만 자동 답변, 그 외 모든 채널은 가드 발동 X (일반 응답 흐름 유지).
+    // 처방: 면접 전용 채널은 INTERVIEW_CHANNEL 매칭 안 되므로 어차피 자유 응답.
+    //       그 외 채널의 면접 패턴 감지 가드는 false로 영구 차단.
+    // 복구 방법: 아래 false를 chName === INTERVIEW_CHANNEL로 되돌림 (단 사용자 명시 결재 후).
+    if (false && chName === INTERVIEW_CHANNEL && hasInterviewPattern && !hasSkillTrigger && !mockActive) {
       const guardMsg = `🎤 면접 전형 질문 감지됨.\n\n이 채널은 일반 커리어 상담 채널이라 자동으로 1인칭 면접 답변을 만들지 않습니다 (할루시네이션 방지).\n\n**모의면접 답변 만들려면:**\n\`/mock-interview 삼성물산\` (슬래시 커맨드)\n또는 \`면접 연습해줘: 조직 실수 경험 질문\` (자연어)\n\n**그냥 질문 자체에 대한 상담이면:** "상담 모드로 답해줘"라고 덧붙여 주세요.`;
       await message.reply(guardMsg).catch(() => message.channel.send(guardMsg));
       await streamer.finalize();

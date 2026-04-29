@@ -19,6 +19,13 @@ ROUTE_RESULT="$BOT_HOME/bin/route-result.sh"
 MEMORY_WARN_MB=900    # LanceDB 인덱스 로드 포함 실측치 고려
 MEMORY_SOFT_MB=1100   # 조용한 선제 재시작 (Discord 알림 없음)
 MEMORY_CRITICAL_MB=1400  # 재시작 임계값: session-sync 스파이크(+450MB) 여유 확보
+
+# v4.45 (2026-04-27 OOM 사고 — Mac Mini 시스템 압박 통합 모니터):
+# 봇 자체 메모리는 정상이어도 Mac Mini swap 압박 시 봇 GC 지연 → 일시적 RSS 폭증 → OOM.
+# swap > 70% 또는 unused < 1GB 감지 시 좀비 정리 트리거 + Discord 알림.
+SYSTEM_SWAP_THRESHOLD_PCT=70       # swap 사용률 % (5GB 중 3.5GB+ = 사고 위험)
+SYSTEM_UNUSED_MIN_MB=1024          # PhysMem unused < 1GB = 압박 신호
+SYSTEM_ALERT_COOLDOWN_SEC=1800     # 시스템 알림 30분 쿨다운
 CLAUDE_STALE_MINUTES=10
 HEARTBEAT_FILE="$BOT_HOME/state/bot-heartbeat"
 HEARTBEAT_STALE_SEC=900  # 15분: 하트비트 없으면 좀비
@@ -311,6 +318,63 @@ check_memory() {
         fi
     done < <(pgrep -P "$pid" 2>/dev/null; echo "$pid")
     echo $(( total_rss / 1024 ))  # Convert KB to MB
+}
+
+# --- System memory pressure check (2026-04-27 OOM 사고 — Mac Mini swap 압박 통합) ---
+# vm_stat + sysctl 조합으로 실측. swap > 70% 또는 unused < 1GB 시 좀비 정리 트리거 + 알림.
+check_system_pressure() {
+    # PhysMem unused (top 출력 파싱)
+    local unused_mb
+    unused_mb=$(top -l 1 -n 0 2>/dev/null | grep "^PhysMem:" | awk -F'[, ]+' '{for(i=1;i<=NF;i++) if($i ~ /unused/) print $(i-1)}' | tr -d 'M')
+    [[ -z "$unused_mb" ]] && unused_mb=99999  # 측정 실패 시 안전쪽
+
+    # Swap 사용률 (sysctl 출력 파싱)
+    local swap_used swap_total swap_pct
+    swap_used=$(sysctl -n vm.swapusage 2>/dev/null | grep -oE 'used = [0-9.]+M' | grep -oE '[0-9.]+' | cut -d. -f1)
+    swap_total=$(sysctl -n vm.swapusage 2>/dev/null | grep -oE 'total = [0-9.]+M' | grep -oE '[0-9.]+' | cut -d. -f1)
+    [[ -z "$swap_used" || -z "$swap_total" || "$swap_total" == "0" ]] && return 0
+    swap_pct=$(( swap_used * 100 / swap_total ))
+
+    local pressure=0
+    local reasons=()
+
+    if (( swap_pct >= SYSTEM_SWAP_THRESHOLD_PCT )); then
+        pressure=1
+        reasons+=("swap ${swap_pct}% (${swap_used}MB/${swap_total}MB)")
+    fi
+
+    if (( unused_mb < SYSTEM_UNUSED_MIN_MB )); then
+        pressure=1
+        reasons+=("unused ${unused_mb}MB (< ${SYSTEM_UNUSED_MIN_MB}MB)")
+    fi
+
+    if (( pressure == 1 )); then
+        # 쿨다운 체크
+        local last_alert_file="$BOT_HOME/state/system-pressure-last-alert"
+        local now_ts last_ts
+        now_ts=$(date +%s)
+        last_ts=0
+        [[ -f "$last_alert_file" ]] && last_ts=$(cat "$last_alert_file" 2>/dev/null || echo 0)
+
+        if (( now_ts - last_ts >= SYSTEM_ALERT_COOLDOWN_SEC )); then
+            local reason_str
+            reason_str=$(IFS=' / '; echo "${reasons[*]}")
+            log "SYSTEM PRESSURE DETECTED: $reason_str — triggering claude-zombie-cleanup"
+
+            # 좀비 정리 자동 트리거
+            bash "$HOME/jarvis/runtime/scripts/claude-zombie-cleanup.sh" 2>&1 | tail -5 >> "$LOG_FILE"
+
+            # Discord 알림
+            send_alert "[Watchdog] 🚨 Mac Mini 시스템 압박 — $reason_str. 좀비 자동 정리 트리거됨."
+
+            echo "$now_ts" > "$last_alert_file"
+        else
+            log "SYSTEM PRESSURE (cooldown): swap=${swap_pct}% unused=${unused_mb}MB"
+        fi
+    fi
+
+    # JSON status용 변수 echo
+    echo "$swap_pct $unused_mb"
 }
 
 # --- Zombie Claude Code agent cleanup (team agents that outlive their session) ---
@@ -696,6 +760,9 @@ HEALTHEOF
             fi
         fi
     fi
+
+    # v4.45: 시스템 압박 체크 (swap > 70% / unused < 1GB) — 좀비 정리 트리거 + Discord 알림
+    check_system_pressure >/dev/null 2>&1 || true
 
     log "Check complete: bot=$health_status mem=${memory_mb}MB stale_killed=$stale_killed crashes=$crash_count"
 }

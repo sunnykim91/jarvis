@@ -22,7 +22,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 
 # ─── Topology Guard: ~/.jarvis/ 신규 유입 차단 ──────────────────────
 # SSoT: ~/jarvis/runtime/ (~/.jarvis 는 호환 심링크, 2026-10-17 만료 예정)
-TOPOLOGY_ALLOWLIST='^(infra/adr/|README\.(ko\.)?md$|infra/CLAUDE-SETUP-GUIDE\.md|infra/README-infra\.md|infra/\.env\.example|infra/lib/(compat|jarvis-paths)\.sh|infra/scripts/(upgrade-v2|migrate-to-runtime|symlink-topology-audit|backup-retention|board-watchdog|tasks-prompt-path-audit)\.(sh|mjs)|infra/scripts/A2-MIGRATION\.md|infra/docs/(A2-MIGRATION|API|CONFIG|EXAMPLES|INSTALL|INSTALL\.en|DEPENDENCY-ANALYSIS|ARCHITECTURE)\.md|infra/discord/lib/(orchestrator\.mjs|streaming\.js)|infra/templates/crontab\.example|infra/prompts/memory-expire\.md|rag/lib/rag-engine\.mjs|docs/promo/awesome-claude-code-submission\.md|\.claude/skills/onboarding/SKILL\.md|^discord/discord-bot\.js$|\.githooks/pre-commit$)'
+TOPOLOGY_ALLOWLIST='^(infra/adr/|README\.(ko\.)?md$|infra/CLAUDE-SETUP-GUIDE\.md|infra/README-infra\.md|infra/\.env\.example|infra/lib/(compat|jarvis-paths)\.sh|infra/scripts/(upgrade-v2|migrate-to-runtime|symlink-topology-audit|backup-retention|board-watchdog|tasks-prompt-path-audit)\.(sh|mjs)|infra/scripts/A2-MIGRATION\.md|infra/docs/(A2-MIGRATION|API|CONFIG|EXAMPLES|INSTALL|INSTALL\.en|DEPENDENCY-ANALYSIS|ARCHITECTURE)\.md|infra/discord/lib/(orchestrator\.mjs|streaming\.js)|infra/templates/crontab\.example|infra/prompts/memory-expire\.md|rag/lib/rag-engine\.mjs|docs/promo/awesome-claude-code-submission\.md|\.claude/skills/onboarding/SKILL\.md|^discord/discord-bot\.js$|\.githooks/pre-commit$|dotfiles/)'
 
 topology_violations=""
 while IFS= read -r file; do

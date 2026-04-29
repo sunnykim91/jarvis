@@ -286,6 +286,14 @@ async function main() {
       // 후처리: "검토했습니다" 류 내러티브 첫 줄 제거
       summary = summary.replace(/^(?:.*검토.*|.*확인.*|.*작성합니다.*|.*정리합니다.*)\n+/m, '');
 
+      // 🛡️ PII 마스킹 가드 (2026-04-26 5차 verify 적발 — addFactToWiki SSoT 우회 경로 차단)
+      // _summary.md 직접 writeFileSync는 wiki-engine.addFactToWiki 가드 안 거침 → 별도 적용 필수.
+      // 이메일 로컬 부분 마스킹 + 도메인 보존 (wiki-engine.mjs:200과 동일 패턴).
+      summary = summary.replace(
+        /([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g,
+        (match, local, domain) => local.includes('*') ? match : `${local[0]}***@${domain}`
+      );
+
       mkdirSync(dirname(d.summaryPath), { recursive: true });
       writeFileSync(d.summaryPath, summary, 'utf-8');
       const action = existingSummary ? '업데이트' : '신규 생성';

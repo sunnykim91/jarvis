@@ -1,24 +1,24 @@
 {
-  "generatedAt": "2026-04-22T14:55:03.515Z",
+  "generatedAt": "2026-04-29T02:56:39.471Z",
   "source": "~/jarvis/runtime/config/tasks.json",
-  "totalTasks": 109,
+  "totalTasks": 110,
   "teamDistribution": {
     "standup": 1,
     "president": 13,
     "infra-lead": 17,
     "finance": 8,
     "trend-lead": 8,
-    "record-lead": 6,
+    "record-lead": 7,
     "library": 1,
-    "growth-lead": 4,
+    "growth-lead": 5,
     "brand-lead": 4,
-    "audit-lead": 19,
-    "secretary": 10,
+    "audit-lead": 20,
+    "secretary": 8,
     "uncategorized": 18
   },
   "typeDistribution": {
-    "prompt": 37,
-    "script": 72
+    "prompt": 39,
+    "script": 71
   },
   "groups": [
     {
@@ -81,7 +81,7 @@
           "discordChannel": "jarvis-ceo",
           "model": null,
           "priority": "system",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": "30분 만료된 open/in-progress 토론을 Claude로 요약해 결론 댓글 포스팅 + resolved 처리",
           "logs": {
@@ -177,7 +177,7 @@
           "discordChannel": "jarvis-ceo",
           "model": null,
           "priority": "system",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": "30일 성과점수 기반 승격(150% 이상)/강등(40% 미만, -5 이하) 처리. 쿨다운: 승격 45일, 강등 30일.",
           "logs": {
@@ -209,7 +209,7 @@
           "discordChannel": "jarvis-ceo",
           "model": null,
           "priority": "normal",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": "08:00~21:00 매시 정각 1회. 하루 최대 14슬롯 (실제 게시는 board-topic-proposer.sh 내 일일 상한 5개로 제한)",
           "logs": {
@@ -283,7 +283,7 @@
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/connections-weekly-insight-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-connections-weekly-insight-*.log",
@@ -447,7 +447,7 @@
             },
             "claudeStderr": {
               "pattern": "claude-stderr-weekly-report-*.log",
-              "exists": false
+              "exists": true
             }
           }
         },
@@ -475,7 +475,7 @@
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/weekly-roi-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-weekly-roi-*.log",
@@ -767,11 +767,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/memory-expire.log",
-              "exists": true
+              "exists": false
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/memory-expire-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-memory-expire-*.log",
@@ -793,7 +793,7 @@
           "discordChannel": "jarvis-system",
           "model": "claude-haiku-4-5-20251001",
           "priority": "weekly",
-          "maxBudget": "0.00",
+          "maxBudget": "0.10",
           "disabled": false,
           "description": null,
           "logs": {
@@ -825,7 +825,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "system",
-          "maxBudget": "0.00",
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "매시간 정각. mistake-extractor의 circuit-state.json을 읽어 OPEN 상태이면 Discord jarvis-system 채널에 알람 (6h rate limit). 2026-04-22 18시간 마비 사고 재발 방지용.",
           "logs": {
@@ -921,7 +921,7 @@
           "discordChannel": null,
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": null,
           "logs": {
@@ -953,7 +953,7 @@
           "discordChannel": "jarvis-system",
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "Jarvis 자동 시스템 점검 (LaunchAgent, Discord봇, RAG, 크론, E2E, Glances, 디스크)",
           "logs": {
@@ -1089,7 +1089,7 @@
           "discordChannel": "jarvis-lite",
           "model": null,
           "priority": "daily",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": null,
           "logs": {
@@ -1131,7 +1131,7 @@
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/finance-monitor-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-finance-monitor-*.log",
@@ -1281,7 +1281,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "daily",
-          "maxBudget": "0",
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "/usage 명령 stale 방지 — 30분마다 ~/.claude/usage-cache.json 갱신",
           "logs": {
@@ -1513,7 +1513,7 @@
           "discordChannel": "jarvis-blog",
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": null,
           "logs": {
@@ -1636,6 +1636,38 @@
           }
         },
         {
+          "id": "session-summaries-rotate",
+          "name": "session-summaries 자동 회전 (AUP refusal 재발 방지)",
+          "schedule": "30 3 * * *",
+          "scheduleHuman": "매일 03:30",
+          "type": "script",
+          "handler": "session-summaries-rotate.sh",
+          "team": {
+            "id": "record-lead",
+            "name": "데이터실 (메모리·RAG 백엔드)"
+          },
+          "discordChannel": null,
+          "model": null,
+          "priority": "daily",
+          "maxBudget": "0.30",
+          "disabled": false,
+          "description": "2026-04-23 AUP refusal 반복 사고(injectedSummary 누적) 재발 방지. 7일 TTL + 8KB size cap으로 session-summaries 회전. 매일 03:30 KST.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/session-summaries-rotate.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/session-summaries-rotate-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-session-summaries-rotate-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
           "id": "session-sync",
           "name": "세션 동기화",
           "schedule": "*/15 * * * *",
@@ -1649,7 +1681,7 @@
           "discordChannel": null,
           "model": "claude-haiku-4-5-20251001",
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.10",
           "disabled": false,
           "description": "최근 30분 내 대화 활동 감지 시 context-bus 즉시 갱신",
           "logs": {
@@ -1681,7 +1713,7 @@
           "discordChannel": "jarvis-system",
           "model": null,
           "priority": "daily",
-          "maxBudget": "0.00",
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "매일 08:00 KST. 전체 사용자(정우·보람 등) user-memory facts 총량·카테고리별 임계치 감시. boram-memory-monitor 통합 대체.",
           "logs": {
@@ -1713,7 +1745,7 @@
           "discordChannel": null,
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": null,
           "logs": {
@@ -1745,7 +1777,7 @@
           "discordChannel": null,
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": null,
           "logs": {
@@ -1785,7 +1817,7 @@
           "discordChannel": null,
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": null,
           "logs": {
@@ -1876,6 +1908,38 @@
           }
         },
         {
+          "id": "interview-ssot-audit",
+          "name": "Interview SSoT Cross-Link Audit",
+          "schedule": "0 9 * * 1",
+          "scheduleHuman": "월요일 09:00",
+          "type": "prompt",
+          "handler": "ask-claude.sh (LLM)",
+          "team": {
+            "id": "growth-lead",
+            "name": "인재개발실 (성장·학습)"
+          },
+          "discordChannel": "jarvis-system",
+          "model": "claude-haiku-4-5-20251001",
+          "priority": "weekly",
+          "maxBudget": "0.10",
+          "disabled": false,
+          "description": null,
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/interview-ssot-audit.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/interview-ssot-audit-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-interview-ssot-audit-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
           "id": "profile-extractor",
           "name": "프로필 주제 자동 추출",
           "schedule": "30 0 * * *",
@@ -1889,7 +1953,7 @@
           "discordChannel": null,
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": null,
           "logs": {
@@ -1993,7 +2057,7 @@
           "discordChannel": "jarvis-blog",
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": null,
           "logs": {
@@ -2025,7 +2089,7 @@
           "discordChannel": "jarvis-blog",
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": null,
           "logs": {
@@ -2057,7 +2121,7 @@
           "discordChannel": "jarvis-blog",
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": null,
           "logs": {
@@ -2097,17 +2161,17 @@
           "discordChannel": "jarvis-system",
           "model": null,
           "priority": "weekly",
-          "maxBudget": "0.00",
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "일요일 07:30 KST. tasks.json ↔ LaunchAgents plist 양방향 감사. orphan/missing/mismatch 3종 감지. 4층 방어막 P4 (2026-04-22 BYPASS 사건 구조적 재발 방지).",
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/bidirectional-audit.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/bidirectional-audit-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-bidirectional-audit-*.log",
@@ -2148,6 +2212,38 @@
           }
         },
         {
+          "id": "cost-cap-audit",
+          "name": "비용 캡 일일 감사",
+          "schedule": "55 5 * * *",
+          "scheduleHuman": "매일 05:55",
+          "type": "prompt",
+          "handler": "ask-claude.sh (LLM)",
+          "team": {
+            "id": "audit-lead",
+            "name": "QA실 (품질·감사·E2E)"
+          },
+          "discordChannel": "jarvis-system",
+          "model": null,
+          "priority": null,
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": null,
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/cost-cap-audit.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/cost-cap-audit-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-cost-cap-audit-*.log",
+              "exists": true
+            }
+          }
+        },
+        {
           "id": "cron-auditor",
           "name": "크론 전체 점검",
           "schedule": "30 5 * * *",
@@ -2161,7 +2257,7 @@
           "discordChannel": "jarvis-system",
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": null,
           "logs": {
@@ -2257,7 +2353,7 @@
           "discordChannel": null,
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": "recovery-learnings.md에서 3회↑ 반복 패턴을 gotchas.md에 자동 승격. 매주 월요일 03:00 KST.",
           "logs": {
@@ -2289,7 +2385,7 @@
           "discordChannel": null,
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "시스템 개요 문서 자동 재생성 (SYSTEM-OVERVIEW.md)",
           "logs": {
@@ -2321,7 +2417,7 @@
           "discordChannel": null,
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": null,
           "logs": {
@@ -2353,7 +2449,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "low",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": null,
           "logs": {
@@ -2385,7 +2481,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "weekly",
-          "maxBudget": "0",
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "2026-04-16 카카오 토큰 갱신 크론 영구 소실 사고 재발 방지. com.jarvis.* plist 중 tasks.json에 id 없는 legacy를 주간 탐지. --notify-discord 옵션으로 경보 가능.",
           "logs": {
@@ -2395,7 +2491,7 @@
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/legacy-plist-audit-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-legacy-plist-audit-*.log",
@@ -2417,7 +2513,7 @@
           "discordChannel": "jarvis-system",
           "model": null,
           "priority": "normal",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": "WARN ≥10MB / CRIT ≥100MB. webhook-listener.err.log(2.9MB) 폭주 재발 방지. 매일 13:17 KST. violation 있을 때만 Discord (24h throttle).",
           "logs": {
@@ -2513,7 +2609,7 @@
           "discordChannel": "jarvis-system",
           "model": null,
           "priority": "normal",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": "enabled 태스크의 script 경로 + LaunchAgent 로드 상태를 매일 전수 검증. 매일 10:07 KST. 문제 있을 때만 Discord 알림.",
           "logs": {
@@ -2545,7 +2641,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "low",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "매일 03:23 KST 활성 태스크 프롬프트/script 필드의 스크립트 경로 존재성 감사. 유령 발견 시 jarvis-system 채널 알림 + ledger 기록 + exit 2. 매주 → 매일로 상향(24h 내 감지 보장).",
           "logs": {
@@ -2577,7 +2673,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "normal",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "com.jarvis.token-ledger-audit plist 이관. SSoT 정합화.",
           "logs": {
@@ -2609,7 +2705,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "normal",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "com.jarvis.tune-task-params plist 이관. SSoT 정합화.",
           "logs": {
@@ -2713,7 +2809,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "low",
-          "maxBudget": "0",
+          "maxBudget": "0.30",
           "disabled": false,
           "description": null,
           "logs": {
@@ -2732,38 +2828,6 @@
           }
         },
         {
-          "id": "auto-diagnose",
-          "name": "자동 실패 진단",
-          "schedule": null,
-          "scheduleHuman": "(none)",
-          "type": "script",
-          "handler": "auto-diagnose.sh",
-          "team": {
-            "id": "secretary",
-            "name": "컨시어지 (Discord 봇)"
-          },
-          "discordChannel": "jarvis-system",
-          "model": null,
-          "priority": null,
-          "maxBudget": "0",
-          "disabled": false,
-          "description": null,
-          "logs": {
-            "stdout": {
-              "path": "~/jarvis/runtime/logs/auto-diagnose.log",
-              "exists": false
-            },
-            "stderr": {
-              "path": "~/jarvis/runtime/logs/auto-diagnose-err.log",
-              "exists": false
-            },
-            "claudeStderr": {
-              "pattern": "claude-stderr-auto-diagnose-*.log",
-              "exists": false
-            }
-          }
-        },
-        {
           "id": "bot-quality-check",
           "name": "봇 응답 품질 분석",
           "schedule": "30 2 * * *",
@@ -2777,7 +2841,7 @@
           "discordChannel": "jarvis-system",
           "model": "claude-haiku-4-5-20251001",
           "priority": "normal",
-          "maxBudget": "0",
+          "maxBudget": "0.10",
           "disabled": false,
           "description": null,
           "logs": {
@@ -2841,17 +2905,17 @@
           "discordChannel": null,
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": null,
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/dev-event-bus.log",
-              "exists": true
+              "exists": false
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/dev-event-bus-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-dev-event-bus-*.log",
@@ -2873,17 +2937,17 @@
           "discordChannel": null,
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": null,
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/dev-event-watcher.log",
-              "exists": true
+              "exists": false
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/dev-event-watcher-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-dev-event-watcher-*.log",
@@ -2905,7 +2969,7 @@
           "discordChannel": "jarvis-system",
           "model": null,
           "priority": "normal",
-          "maxBudget": "0",
+          "maxBudget": "0.30",
           "disabled": false,
           "description": null,
           "logs": {
@@ -2924,38 +2988,6 @@
           }
         },
         {
-          "id": "jarvis-coder",
-          "name": "자비스 코더 (온디맨드)",
-          "schedule": null,
-          "scheduleHuman": "(none)",
-          "type": "script",
-          "handler": "jarvis-coder.sh",
-          "team": {
-            "id": "secretary",
-            "name": "컨시어지 (Discord 봇)"
-          },
-          "discordChannel": "jarvis-system",
-          "model": null,
-          "priority": "normal",
-          "maxBudget": "0",
-          "disabled": false,
-          "description": null,
-          "logs": {
-            "stdout": {
-              "path": "~/jarvis/runtime/logs/jarvis-coder.log",
-              "exists": true
-            },
-            "stderr": {
-              "path": "~/jarvis/runtime/logs/jarvis-coder-err.log",
-              "exists": false
-            },
-            "claudeStderr": {
-              "pattern": "claude-stderr-jarvis-coder-*.log",
-              "exists": false
-            }
-          }
-        },
-        {
           "id": "skill-eval",
           "name": "스킬 자동 평가",
           "schedule": "30 4 * * 0",
@@ -2969,7 +3001,7 @@
           "discordChannel": "jarvis-ceo",
           "model": null,
           "priority": "weekly",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": null,
           "logs": {
@@ -3001,7 +3033,7 @@
           "discordChannel": "jarvis-system",
           "model": "claude-haiku-4-5-20251001",
           "priority": "weekly",
-          "maxBudget": "0",
+          "maxBudget": "0.10",
           "disabled": false,
           "description": null,
           "logs": {
@@ -3041,7 +3073,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "daily",
-          "maxBudget": "0.00",
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "매일 04:00 KST. 오래된 백업 파일 보존 정책 적용. plist-only였으나 Nexus SSoT로 이관 (2026-04-21).",
           "logs": {
@@ -3073,17 +3105,17 @@
           "discordChannel": null,
           "model": null,
           "priority": null,
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": "2026-03-19 tasks.json에서 제거됨. plist가 잔존하여 ABORTED 방지용 stub.",
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/boram-daily-schedule.log",
-              "exists": true
+              "exists": false
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/boram-daily-schedule-err.log",
-              "exists": true
+              "exists": false
             },
             "claudeStderr": {
               "pattern": "claude-stderr-boram-daily-schedule-*.log",
@@ -3111,15 +3143,15 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/compound-review.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/compound-review-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-compound-review-*.log",
-              "exists": false
+              "exists": true
             }
           }
         },
@@ -3137,7 +3169,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "normal",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": "com.jarvis.context-extractor plist 이관. SSoT 정합화.",
           "logs": {
@@ -3169,7 +3201,7 @@
           "discordChannel": "jarvis-system",
           "model": null,
           "priority": "daily",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "실제 호출자는 crontab의 cron-monitoring-orchestrator.sh component proactive_monitoring (*/30). LaunchAgent plist는 legacy 경로로 보존하되 실제로는 미동작(로그상 06:03 실행 흔적 없음). 2026-04-21 실체 정합화: tasks.json 스케줄을 실제 동작(30분)에 맞춤. Discord 전송은 상태 변화·긴급(PERMA_FAILS)·주간 요약(월 09:00) 시에만 (cron-master.sh 내부 digest hash 비교). allowEmptyResult=true로 빈 출력 허용.",
           "logs": {
@@ -3201,17 +3233,17 @@
           "discordChannel": "jarvis-system",
           "model": null,
           "priority": "weekly",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "cron-master.sh 주요 플로우 regression 감지. 월요일 09:15 실행 — 주간 강제 리포트(09:00) 직후. 8 테스트/11 검증. PASS=11/11이면 ✅ 요약만, 하나라도 FAIL이면 실패 케이스 목록 Discord 전송. 신설: 2026-04-21 (UNLOADED[@] unbound variable 재발 방지 포함).",
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/cron-master-smoke.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/cron-master-smoke-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-cron-master-smoke-*.log",
@@ -3233,17 +3265,17 @@
           "discordChannel": null,
           "model": null,
           "priority": "daily",
-          "maxBudget": "0",
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "tasks.json 변경이 즉시 ~/Library/LaunchAgents/com.jarvis.*.plist에 반영되도록 매 시간 15분에 cron-sync 실행. 카카오 사고 재발 방지의 일부.",
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/cron-sync-hourly.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/cron-sync-hourly-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-cron-sync-hourly-*.log",
@@ -3265,7 +3297,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "normal",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "com.jarvis.dev-task-runner plist 이관. SSoT 정합화.",
           "logs": {
@@ -3297,7 +3329,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "normal",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": "com.jarvis.entity-graph plist 이관. SSoT 정합화.",
           "logs": {
@@ -3329,7 +3361,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "normal",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "com.jarvis.gen-indexes plist 이관. SSoT 정합화.",
           "logs": {
@@ -3361,7 +3393,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "normal",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": "com.jarvis.jarvis-home-sync plist 이관. SSoT 정합화.",
           "logs": {
@@ -3393,7 +3425,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "daily",
-          "maxBudget": "0",
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "refresh_token으로 access_token 재발급 (6h 만료 주기 대응). 2026-04-16 LaunchAgent 정리 때 누락됐다가 2026-04-22 재등록.",
           "logs": {
@@ -3403,7 +3435,7 @@
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/kakao-token-refresh-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-kakao-token-refresh-*.log",
@@ -3457,17 +3489,17 @@
           "discordChannel": null,
           "model": null,
           "priority": "daily",
-          "maxBudget": "0.00",
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "매일 06:00 KST. tasks.json의 output:discord 태스크 중 plist가 bot-cron.sh를 우회하는 항목을 자동으로 정상 패턴으로 rewrite + reload. 2026-04-22 daily-usage-check 4일 침묵 사건 재발 방지 가드.",
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/plist-bypass-autofix.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/plist-bypass-autofix-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-plist-bypass-autofix-*.log",
@@ -3489,7 +3521,7 @@
           "discordChannel": null,
           "model": null,
           "priority": "daily",
-          "maxBudget": "0.00",
+          "maxBudget": "0.30",
           "disabled": false,
           "description": "매일 03:00 KST. RAG 런타임 데이터 백업. plist-only였으나 Nexus SSoT로 이관 (2026-04-21).",
           "logs": {
@@ -3553,7 +3585,7 @@
           "discordChannel": "jarvis-system",
           "model": null,
           "priority": "low",
-          "maxBudget": null,
+          "maxBudget": "0.30",
           "disabled": true,
           "description": null,
           "logs": {
@@ -3591,11 +3623,11 @@
           "logs": {
             "stdout": {
               "path": "~/jarvis/runtime/logs/wiki-reference-report.log",
-              "exists": false
+              "exists": true
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/wiki-reference-report-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-wiki-reference-report-*.log",

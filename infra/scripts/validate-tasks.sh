@@ -212,7 +212,7 @@ echo ""
 echo "  Results: $PASS_COUNT passed, $ERRORS errors, $WARNS warnings"
 
 if [[ "$ERRORS" -gt 0 ]]; then
-  echo "  ❌ 검증 실패 — $ERRORS개 오류 수정 필요"
+  echo "  ❌ 검증 실패 — ${ERRORS}개 오류 수정 필요"
   exit 1
 fi
 

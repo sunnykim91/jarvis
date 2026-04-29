@@ -12,6 +12,10 @@ allow:
   # Setup wizards
   - "scripts/setup_rag.py"
   - "scripts/setup_infra.py"
+  - "scripts/opensync.py"
+
+  # Claude Code 설정 dotfiles (행동 원칙 + 스킬 + 훅)
+  - "dotfiles/claude/**"
 
   # Documentation
   - "docs/img/**"

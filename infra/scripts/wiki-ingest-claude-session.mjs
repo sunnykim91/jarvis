@@ -24,7 +24,7 @@
 
 import {
   readFileSync, existsSync, readdirSync, statSync,
-  appendFileSync, mkdirSync,
+  appendFileSync, mkdirSync, writeFileSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
@@ -43,7 +43,19 @@ const HAIKU_TIMEOUT   = 60_000;
 const MIN_FACT_LEN    = 6;
 const MAX_FACT_LEN    = 160;
 const MAX_INPUT_CHARS = 12_000;
-const MAX_AGE_SEC     = 3 * 60 * 60; // 3시간 이내 세션만 (너무 오래된 파일 재처리 방지)
+const MAX_AGE_SEC     = 3 * 60 * 60;
+
+// 2026-04-26 누수 가드 (Agent 감사 결과 — 월 $17.78 추정 누수 차단):
+//   - 세션 .md 최소 크기 강화: 120 bytes → 2000 bytes (잡음 추출 차단)
+//   - per-cwd 쿨다운 5분 (워크트리 16개 중복 트리거 방지)
+//   - 일일 비용 캡 $1.00 (글로벌)
+//   - token-ledger 적재 (Discord 봇 동일 ledger 통합)
+const MIN_SESSION_BYTES = 2000;
+const COOLDOWN_SEC      = 300;
+const DAILY_CAP_USD     = 1.00;
+const LEDGER_FILE       = join(BOT_HOME, 'state', 'token-ledger.jsonl');
+const COOLDOWN_DIR      = join(BOT_HOME, 'state', 'wiki-ingest-cooldown');
+const DAILY_COST_FILE   = join(BOT_HOME, 'state', 'wiki-ingest-daily-cost.json');
 
 // 추출 금지 패턴 — autoExtractMemory의 FAMILY_JUNK_RE 에서 일반화
 const JUNK_RE = /(^compacted at|^사용자 의도|^완료된 작업|^미완 작업|^핵심 참조|^\[20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\])/i;
@@ -140,7 +152,7 @@ function callHaiku(prompt, timeoutMs = HAIKU_TIMEOUT) {
   return new Promise((resolve, reject) => {
     const proc = spawn(
       CLAUDE_BIN,
-      ['--model', MODEL, '--output-format', 'text', '--max-turns', '1', '--tools', '', '--dangerously-skip-permissions'],
+      ['--model', MODEL, '--output-format', 'json', '--max-turns', '1', '--tools', '', '--dangerously-skip-permissions'],
       {
         timeout: timeoutMs,
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -154,11 +166,79 @@ function callHaiku(prompt, timeoutMs = HAIKU_TIMEOUT) {
     proc.stdin.write(prompt, 'utf-8');
     proc.stdin.end();
     proc.on('close', (code) => {
-      if (code === 0) resolve(out.trim());
-      else reject(new Error(`haiku exit ${code}: ${err.slice(0, 200)}`));
+      if (code !== 0) {
+        reject(new Error(`haiku exit ${code}: ${err.slice(0, 200)}`));
+        return;
+      }
+      try {
+        const json = JSON.parse(out.trim());
+        resolve({
+          text: (json.result || '').trim(),
+          input: json.usage?.input_tokens || 0,
+          output: json.usage?.output_tokens || 0,
+          cost: json.total_cost_usd || json.cost_usd || 0,
+          duration_ms: json.duration_ms || 0,
+        });
+      } catch (e) {
+        reject(new Error(`json parse fail: ${e.message}`));
+      }
     });
     proc.on('error', reject);
   });
+}
+
+// ── 가드 1: 일일 비용 캡 (글로벌) ──────────────────────────────────────────────
+function loadDailyCost() {
+  try {
+    const raw = JSON.parse(readFileSync(DAILY_COST_FILE, 'utf-8'));
+    const today = new Date().toISOString().slice(0, 10);
+    if (raw.date === today) return raw.cost_usd || 0;
+  } catch { /* 파일 없음/손상 */ }
+  return 0;
+}
+function saveDailyCost(cost) {
+  try {
+    mkdirSync(dirname(DAILY_COST_FILE), { recursive: true });
+    const today = new Date().toISOString().slice(0, 10);
+    writeFileSync(DAILY_COST_FILE, JSON.stringify({ date: today, cost_usd: cost }));
+  } catch { /* ignore */ }
+}
+
+// ── 가드 2: per-cwd 쿨다운 (워크트리 중복 차단) ───────────────────────────────
+function checkCooldown(sessionFile) {
+  try {
+    mkdirSync(COOLDOWN_DIR, { recursive: true });
+    // sessionFile path 기반 hash (워크트리별로 다른 .md여도 같은 cwd면 같은 슬러그)
+    const slug = sessionFile.replace(/[^a-z0-9]/gi, '_').slice(-100);
+    const f = join(COOLDOWN_DIR, slug + '.ts');
+    if (existsSync(f)) {
+      const last = parseInt(readFileSync(f, 'utf-8').trim(), 10);
+      if (Date.now() - last < COOLDOWN_SEC * 1000) return true;
+    }
+    writeFileSync(f, Date.now().toString());
+    return false;
+  } catch { return false; }
+}
+
+// ── 가드 3: token-ledger 적재 (Discord 봇 동일 ledger 통합) ──────────────────
+function appendLedger(sessionFile, usage, status, factsWritten = 0) {
+  try {
+    mkdirSync(dirname(LEDGER_FILE), { recursive: true });
+    const entry = {
+      ts: new Date().toISOString(),
+      task: 'wiki-ingest-claude',
+      model: MODEL,
+      status,
+      input: usage.input || 0,
+      output: usage.output || 0,
+      cost_usd: usage.cost || 0,
+      duration_ms: usage.duration_ms || 0,
+      result_bytes: factsWritten,
+      source: 'stop-hook',
+      session_file: sessionFile,
+    };
+    appendFileSync(LEDGER_FILE, JSON.stringify(entry) + '\n');
+  } catch { /* 적재 실패는 무시 */ }
 }
 
 // ── 응답에서 JSON 배열 파싱 ──────────────────────────────────────────────────
@@ -231,8 +311,8 @@ async function main() {
   }
 
   const stat = statSync(sessionFile);
-  if (stat.size < 120) {
-    const result = { status: 'skipped', reason: 'file too small', sessionFile, size: stat.size };
+  if (stat.size < MIN_SESSION_BYTES) {
+    const result = { status: 'skipped', reason: 'file too small', sessionFile, size: stat.size, threshold: MIN_SESSION_BYTES };
     log('info', 'skipped', result);
     console.log(JSON.stringify(result));
     return;
@@ -247,18 +327,43 @@ async function main() {
     return;
   }
 
+  // 가드 1: 일일 비용 캡 ($1.00)
+  const todayCost = loadDailyCost();
+  if (todayCost >= DAILY_CAP_USD) {
+    const result = { status: 'skipped', reason: 'daily cost cap reached', sessionFile, today_cost_usd: todayCost, cap_usd: DAILY_CAP_USD };
+    log('warn', 'cap reached', result);
+    appendLedger(sessionFile, { input: 0, output: 0, cost: 0, duration_ms: 0 }, 'skipped_cap');
+    console.log(JSON.stringify(result));
+    return;
+  }
+
+  // 가드 2: per-cwd 쿨다운 (5분)
+  if (checkCooldown(sessionFile)) {
+    const result = { status: 'skipped', reason: 'cooldown active (5min)', sessionFile };
+    log('info', 'cooldown', result);
+    console.log(JSON.stringify(result));
+    return;
+  }
+
   const content = readFileSync(sessionFile, 'utf-8');
   log('info', 'ingesting', { sessionFile, size: stat.size });
 
   let rawResponse;
+  let usage = { input: 0, output: 0, cost: 0, duration_ms: 0 };
   try {
-    rawResponse = await callHaiku(buildExtractionPrompt(content));
+    const r = await callHaiku(buildExtractionPrompt(content));
+    rawResponse = r.text;
+    usage = { input: r.input, output: r.output, cost: r.cost, duration_ms: r.duration_ms };
   } catch (err) {
     const result = { status: 'error', error: err.message, sessionFile };
     log('error', 'haiku call failed', result);
+    appendLedger(sessionFile, usage, 'error');
     console.log(JSON.stringify(result));
     return;
   }
+
+  // 일일 비용 누적 갱신
+  saveDailyCost(loadDailyCost() + (usage.cost || 0));
 
   const facts = parseFactsFromResponse(rawResponse);
   if (!facts) {
@@ -290,8 +395,10 @@ async function main() {
     factsFiltered: facts.length - valid.length,
     factsWritten: written,
     domains: domainCounts,
+    usage,
   };
   log('info', 'done', result);
+  appendLedger(sessionFile, usage, 'success', written);
   console.log(JSON.stringify(result));
 }
 
