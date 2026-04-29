@@ -1695,6 +1695,22 @@ ${extracted}
               } catch (e) {
                 log('debug', 'anger-detector skipped', { error: e?.message });
               }
+
+              // 🛡️ 가드 #1 (2026-04-28): 자비스 응답 자체에 단정 표현이 있으면
+              //   사용자 분노가 없어도 anger-signals.jsonl에 기록 → 다음 turn에
+              //   "🚨 직전 정정" 헤더로 강제 주입되어 같은 단정 즉시 차단.
+              try {
+                const { recordSelfAssertiveSignal } = await import('./anger-detector.mjs');
+                recordSelfAssertiveSignal({
+                  userId: effectiveAuthor.id,
+                  channelId: effectiveChannelId,
+                  sessionKey,
+                  userText: originalPrompt,
+                  assistantText: lastAssistantText,
+                }).catch((e) => log('debug', 'self-assertive outer catch', { error: e?.message }));
+              } catch (e) {
+                log('debug', 'self-assertive skipped', { error: e?.message });
+              }
             }
             // 토큰 누적: result 이벤트의 usage.input_tokens (claude-runner.js에서 포워딩)
             const inputTokens = event.usage?.input_tokens ?? 0;

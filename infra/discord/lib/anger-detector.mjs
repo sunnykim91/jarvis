@@ -159,3 +159,57 @@ export function getLatestAngerSignal() {
     return last;
   } catch { return null; }
 }
+
+// ────────────────────────────────────────────────────────────
+// 가드 #1 통합 — 자비스 응답 자체에서 단정 표현 검출 후 anger-signals 기록
+// (사용자가 분노하지 않아도, LLM이 단정 표현을 쓰면 자동 신호화)
+// ────────────────────────────────────────────────────────────
+
+/**
+ * 응답 검증 후 단정 표현 발견 시 anger-signals.jsonl에 자체 신호 기록.
+ * 다음 turn에서 prompt-sections.js의 buildAngerCorrectionSection이
+ * 이 신호를 읽어 "🚨 직전 정정" 헤더로 강제 주입 → 같은 단정 즉시 차단.
+ *
+ * 사고 사례 (2026-04-28):
+ *   사용자가 분노 안 해도 자비스가 "100% 자동 차단" 단정 후, 사용자 지적 후에야
+ *   사후 정정. 자기검열만으로 차단 불가능하므로, 단정 검출 시 signals에 자동 기록.
+ *
+ * @param {object} args
+ * @param {string} args.userId
+ * @param {string} args.channelId
+ * @param {string} args.sessionKey
+ * @param {string} args.userText - 사용자 원문 (맥락)
+ * @param {string} args.assistantText - 검증 대상 자비스 응답
+ */
+export async function recordSelfAssertiveSignal(args) {
+  try {
+    const { validateResponse } = await import('./response-validator.mjs');
+    const validation = validateResponse(args.assistantText || '');
+
+    // info 이하면 신호 안 박음 (노이즈 방지)
+    if (validation.severity === 'pass' || validation.severity === 'info') {
+      return { recorded: false, reason: 'below-threshold', validation };
+    }
+
+    const ts = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' });
+    const tsISO = new Date(Date.now() + 9 * 3600_000).toISOString().replace('Z', '+09:00');
+    const topMatches = validation.matches.slice(0, 3).map(m => `[${m.level}] ${m.label}`).join(', ');
+
+    const signal = {
+      ts: tsISO,
+      userId: args.userId,
+      channelId: args.channelId,
+      keyword: `self-assertive-${validation.severity}`,
+      userText: (args.userText || '').slice(0, 200),
+      assistantText: (args.assistantText || '').slice(0, 600),
+      sessionKey: args.sessionKey,
+      _self: true,
+      _matches: topMatches,
+    };
+    pruneAndAppendSignal(signal);
+    return { recorded: true, validation };
+  } catch (err) {
+    process.stderr.write(`[anger-detector] recordSelfAssertiveSignal failed: ${err.message}\n`);
+    return { recorded: false, reason: 'error', error: err.message };
+  }
+}

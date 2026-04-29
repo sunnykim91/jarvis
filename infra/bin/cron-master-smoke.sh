@@ -15,8 +15,8 @@ set -euo pipefail
 VERBOSE=0
 if [[ "${1:-}" == "--verbose" ]]; then VERBOSE=1; fi
 
-CRON_MASTER="${HOME}/jarvis/runtime/bin/cron-master.sh"
-STATE_DIR="${HOME}/jarvis/runtime/state"
+CRON_MASTER="${HOME}/.jarvis/bin/cron-master.sh" # ALLOW-DOTJARVIS (심링크 ~/jarvis/runtime)
+STATE_DIR="${HOME}/.jarvis/state" # ALLOW-DOTJARVIS
 DIGEST_FILE="${STATE_DIR}/cron-master-last-digest.txt"
 LEDGER_FILE="${STATE_DIR}/cron-master-ledger.jsonl"
 

@@ -32,6 +32,7 @@ import {
   buildSafetySection, buildUserContextSection,
   buildOwnerPreferencesSection, buildOwnerPersonaSection, buildOwnerVisualizationSection, buildFamilyBriefingContext,
   buildWikiContextSection, buildAngerCorrectionSection,
+  buildHarnessAutoTriggerSection, buildFactsKeywordSection, buildEvidenceMandateSection,
 } from './prompt-sections.js';
 import { getPromptHarness, Tier } from './prompt-harness.js';
 import { loadHandoff, formatHandoffForPrompt } from './session-handoff.js';
@@ -963,11 +964,42 @@ export async function* createClaudeSession(prompt, {
     if (wikiCtx) systemParts.push('', wikiCtx);
   }
 
+  // 🔍 가드 #5 (2026-04-29): _facts.md 키워드 매칭 자동 발췌
+  // SSoT Cross-Link 봉쇄 해소 — career/_summary.md로 _facts.md 4000줄이
+  // 영구 invisible이던 사고 영구 차단. 사용자 발화 키워드 → _facts grep top 8.
+  if (isOwner && prompt) {
+    try {
+      const factsCtx = buildFactsKeywordSection({ prompt, botHome: BOT_HOME });
+      if (factsCtx) systemParts.push('', factsCtx);
+    } catch { /* best-effort */ }
+  }
+
+  // 🛡️ 가드 #9 (2026-04-29) — 실측 의무 트리거 (Evidence Mandate)
+  // 사용자 prompt가 인프라/시스템 검토 카테고리(딥다이브·검토·분석·왜·메카니즘 등)면
+  // 시스템 프롬프트에 실측 의무 룰 강제 prepend → 거짓 단정 패턴 6건 인프라 차원 차단.
+  // 가드 #10(단정 표현 검출)과 함께 동작 — prepend된 룰을 LLM이 보면 단정 자체가 줄어듦.
+  if (isOwner && prompt) {
+    try {
+      const evidenceMandate = buildEvidenceMandateSection({ prompt });
+      if (evidenceMandate) systemParts.push('', evidenceMandate);
+    } catch { /* best-effort */ }
+  }
+
   // 🚨 직전 정정 신호 (Harness P2) — 24h 이내 분노 신호 1건 강제 주입
   // learned-mistakes top5 캡 밖이라도 즉시 LLM에 노출하여 같은 편향 재발 차단.
   if (isOwner) {
     const angerSection = buildAngerCorrectionSection({ botHome: BOT_HOME });
     if (angerSection) systemParts.push('', angerSection);
+  }
+
+  // 🔧 가드 #2 (2026-04-28) 자동 하네스 트리거 — "동작 원리/메커니즘" 류 키워드 매칭 시
+  //   관련 cross-check 스크립트 자동 실행 → 결과를 system prompt에 강제 주입.
+  //   LLM이 페르소나 자연어 룰만 보고 코드 SSoT 누락하는 거짓 답변 차단.
+  if (isOwner) {
+    try {
+      const harnessSection = await buildHarnessAutoTriggerSection(prompt);
+      if (harnessSection) systemParts.push('', harnessSection);
+    } catch { /* best-effort */ }
   }
 
   // Claude Max usage summary

@@ -142,3 +142,4 @@ infra/scripts/interview-verifier-server.mjs
 # interview-ralph-runner: 질문 풀에 STAR/회사명/PII 식별자 포함.
 infra/scripts/interview-ralph-runner.mjs
 .local-backup/
+infra/scripts/*.LOCKED.*

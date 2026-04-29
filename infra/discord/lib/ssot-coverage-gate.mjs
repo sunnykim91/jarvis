@@ -108,25 +108,31 @@ export function evaluateCoverage({ question, userProfile, scenarioMetadata = nul
 // L4 Pre-Send Gate — 메타 verifier 결과 기반 송출 결정
 // fast-path가 verifyAnswerWithClaude 후 호출. creative.length + isOutOfScope 조합 임계.
 // ─────────────────────────────────────────────────────────────
-const PRESEND_CREATIVE_HARD_LIMIT = 5;       // 6건 사고(2026-04-28) 임계 — 5건 이상이면 무조건 차단
-const PRESEND_CREATIVE_OOS_LIMIT = 3;        // outOfScope일 땐 3건만 넘어도 차단 (더 엄격)
+const PRESEND_CREATIVE_HARD_LIMIT = 5;         // 6건 사고(2026-04-28) 임계 — 5건 이상이면 무조건 차단
+const PRESEND_CREATIVE_HARD_LIMIT_SCENARIO = 12; // v4.58: 시나리오(answerGuide 기반) 완화 임계
+// 이유: 시나리오 질문은 PDF/슬라이드 내용이 정답 — Claude verifier가 user-profile에 없다고 "창작"으로
+//       분류해도 실제로는 합법적 콘텐츠. 5건 임계는 과민 → 정상 PDF 기반 답변 차단 false positive.
+const PRESEND_CREATIVE_OOS_LIMIT = 3;          // outOfScope일 땐 3건만 넘어도 차단 (더 엄격)
 
 /**
  * @param {Object} args
  * @param {Array} args.creative — verifier 적발 creative array
  * @param {boolean} args.isOutOfScope — Coverage Gate 결과
  * @param {number} args.bodyLength — 답변 본문 길이 (너무 짧으면 차단 무의미)
+ * @param {boolean} args.isScenario — answerGuide 기반 시나리오 질문 여부 (v4.58)
  * @returns {{ decision: 'PASS'|'BLOCK', reason: string, creativeCount: number }}
  */
-export function evaluatePreSendGate({ creative = [], isOutOfScope = false, bodyLength = 0 }) {
+export function evaluatePreSendGate({ creative = [], isOutOfScope = false, bodyLength = 0, isScenario = false }) {
   const creativeCount = Array.isArray(creative) ? creative.length : 0;
   if (bodyLength < 100) {
     return { decision: 'PASS', reason: 'body too short for meaningful gate', creativeCount };
   }
-  if (creativeCount >= PRESEND_CREATIVE_HARD_LIMIT) {
+  // v4.58: 시나리오 모드는 완화된 임계 적용
+  const hardLimit = isScenario ? PRESEND_CREATIVE_HARD_LIMIT_SCENARIO : PRESEND_CREATIVE_HARD_LIMIT;
+  if (creativeCount >= hardLimit) {
     return {
       decision: 'BLOCK',
-      reason: `creative ${creativeCount}건 ≥ HARD_LIMIT(${PRESEND_CREATIVE_HARD_LIMIT})`,
+      reason: `creative ${creativeCount}건 ≥ HARD_LIMIT(${hardLimit})${isScenario ? '[scenario]' : ''}`,
       creativeCount,
     };
   }
@@ -141,25 +147,29 @@ export function evaluatePreSendGate({ creative = [], isOutOfScope = false, bodyL
 }
 
 // ─────────────────────────────────────────────────────────────
-// 폴백 답변 빌더 — outOfScope 또는 BLOCK 시 정직 답변 생성
-// LLM 호출 없이 결정적 텍스트. answerGuide가 있으면 그 핵심 문장만 인용.
+// 폴백 답변 빌더 — BLOCK 시 SSoT(answerGuide) 기반 1인칭 재구성
+// v4.59 (2026-04-29 주인님 지시): "정직 답변 대체" 어조 제거. 경험 기반 답변 강제.
+// answerGuide가 있으면 그것을 자기 경험 톤으로 직접 답변. 진짜 outOfScope일 때만 정직.
+// LLM 호출 없는 결정적 텍스트.
 // ─────────────────────────────────────────────────────────────
 export function buildOutOfScopeFallback({ question, scenarioMetadata = null, externalDomainHit = null }) {
   const slide = scenarioMetadata?.slide ? `슬라이드 ${scenarioMetadata.slide}` : '발표 자료';
-  const guide = scenarioMetadata?.answerGuide ? String(scenarioMetadata.answerGuide).slice(0, 400) : '';
+  const guide = scenarioMetadata?.answerGuide ? String(scenarioMetadata.answerGuide).slice(0, 600) : '';
   const domainHint = externalDomainHit ? ` (감지된 영역: ${externalDomainHit.slice(0, 40)})` : '';
 
-  const lines = [
-    `이 질문은 제 직접 경험 영역 밖이라 솔직하게 말씀드리겠습니다${domainHint}.`,
-    '',
-    `${slide}에 정리된 내용을 기준으로 답변드리면:`,
-  ];
   if (guide) {
-    lines.push('');
-    lines.push(guide);
+    return [
+      `${slide}에 정리한 내용으로 답변드립니다.`,
+      '',
+      guide,
+      '',
+      '이 부분이 제가 직접 검토하고 정리한 사실 기반 내용입니다. 추가로 디깅하실 영역이 있으시면 말씀해 주십시오.',
+    ].join('\n');
   }
-  lines.push('');
-  lines.push('이 영역의 실무 경험은 부족하지만, 발표 자료에 정리한 원칙 기준으로 의사결정 근거는 설명드릴 수 있습니다. 더 깊은 디깅이 필요하시면 말씀해 주십시오.');
 
-  return lines.join('\n');
+  return [
+    `이 질문은 제 직접 경험 영역 밖이라 솔직히 말씀드리겠습니다${domainHint}.`,
+    '',
+    `${slide} 범위를 벗어나는 부분이라, 추측보다는 모른다고 인정하는 것이 정확합니다. 관련 영역에서 의사결정 원칙은 설명드릴 수 있으니 필요하시면 말씀해 주십시오.`,
+  ].join('\n');
 }

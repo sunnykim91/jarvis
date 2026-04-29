@@ -301,6 +301,10 @@ function _splitIntoChunks(text, maxLen = 3800) {
   if (text.length <= maxLen) return [text];
   const chunks = [];
   let remaining = text;
+  // 가드 #7 (2026-04-29): 이전 chunk가 열린 코드블록으로 끝났으면 다음 chunk 시작에 자동 열기.
+  // 빈 문자열 = 닫힌 상태. 비어있지 않으면 lang 또는 빈 fence(' ' sentinel) 보존.
+  let openFenceLang = '';
+
   while (remaining.length > maxLen) {
     let splitAt = maxLen;
     const headSlice = remaining.slice(0, maxLen);
@@ -337,10 +341,40 @@ function _splitIntoChunks(text, maxLen = 3800) {
         // else: 강제 분할 (maxLen 그대로)
       }
     }
-    chunks.push(remaining.slice(0, splitAt).trimEnd());
-    remaining = remaining.slice(splitAt).trimStart();
+    let chunk = remaining.slice(0, splitAt).trimEnd();
+    let nextRemaining = remaining.slice(splitAt).trimStart();
+
+    // 가드 #7: 이전 chunk가 fence open으로 끝났으면 이 chunk 시작에 자동 열기
+    // (mermaid·json·기타 코드블록 본문이 chunk 경계에 걸리는 사고 방지)
+    if (openFenceLang) {
+      const langTag = openFenceLang === ' ' ? '' : openFenceLang;
+      chunk = '```' + langTag + '\n' + chunk;
+    }
+
+    // 가드 #7: 이 chunk 끝의 fence 카운트 홀수 → 자동 닫기 + 다음 chunk 열기 정보 보존
+    const fences = (chunk.match(/```/g) || []).length;
+    if (fences % 2 === 1) {
+      // 마지막 열린 fence의 언어 추출
+      let lang = '';
+      for (const fm of chunk.matchAll(/```(\w*)/g)) lang = fm[1] || '';
+      chunk += '\n```';
+      openFenceLang = lang || ' '; // 빈 fence는 ' ' sentinel
+    } else {
+      openFenceLang = '';
+    }
+
+    chunks.push(chunk);
+    remaining = nextRemaining;
   }
-  if (remaining.length > 0) chunks.push(remaining);
+  // 마지막 잔여 — 이전 chunk가 fence open이면 이 chunk 시작에 자동 열기
+  if (remaining.length > 0) {
+    let last = remaining;
+    if (openFenceLang) {
+      const langTag = openFenceLang === ' ' ? '' : openFenceLang;
+      last = '```' + langTag + '\n' + last;
+    }
+    chunks.push(last);
+  }
   return chunks;
 }
 
