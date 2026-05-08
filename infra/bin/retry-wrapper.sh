@@ -32,6 +32,8 @@ MODEL="${7:-}"
 # 8번째 인수: tasks.json retry.max → bot-cron.sh가 전달 (없으면 3 기본값)
 MAX_RETRIES="${8:-3}"
 BACKOFF_DELAYS=(5 10 20 40)
+# Rate limit 전용 exponential backoff (더 공격적: 60s, 300s, 900s, 1800s)
+RATE_LIMIT_DELAYS=(60 300 900 1800)
 
 mkdir -p "$(dirname "$RETRY_LOG")"
 
@@ -125,7 +127,7 @@ classify_error() {
     if [[ -f "$stderr_file" ]]; then check_files+=("$stderr_file"); fi
     if grep -qi "rate_limit\|rate limit\|429\|hit your limit\|you've hit\|usage limit" "${check_files[@]}" 2>/dev/null; then echo "RATE_LIMITED"
     elif grep -qi "overloaded\|503\|capacity" "${check_files[@]}" 2>/dev/null; then echo "OVERLOADED"
-    elif grep -qi "authentication\|unauthorized\|401" "${check_files[@]}" 2>/dev/null; then echo "AUTH_ERROR"
+    elif grep -qiE "authentication|unauthorized|401|invalid api key|fix external api key|not logged in" "${check_files[@]}" 2>/dev/null; then echo "AUTH_ERROR"
     elif grep -qi "context_length\|too.long\|too.large" "${check_files[@]}" 2>/dev/null; then echo "TOO_LONG"
     elif grep -qi "no such file or directory\|command not found" "${check_files[@]}" 2>/dev/null; then echo "SCRIPT_MISSING"
     elif grep -qi "budget exceeded\|max.budget\|예산 초과\|예산초과\|budget.cap" "${check_files[@]}" 2>/dev/null; then echo "BUDGET_EXCEEDED"
@@ -190,7 +192,22 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
     if [[ "$classification" == "retryable" && "$exit_code" -ne 0 ]]; then
         stdout_class=$(classify_error "$RESULT_TMP")
         case "$stdout_class" in
-            AUTH_ERROR|TOO_LONG)
+            AUTH_ERROR)
+                # G5 (2026-05-08): 첫 attempt AUTH_ERROR → oauth-refresh --force 동기 호출 후 재시도.
+                # 두 번째 attempt에서도 AUTH_ERROR면 진짜 인증 결함이라 non-retryable 유지.
+                # 6일 연속 morning-standup AUTH 실패의 근본 원인 차단.
+                if [[ "$attempt" -eq 1 ]]; then
+                    printf '[%s] [%s] [AUTH_ERROR] G5 — oauth-refresh.sh --force 동기 호출 (attempt=1)\n' \
+                        "$(date '+%F %H:%M:%S')" "$TASK_ID" \
+                        >> "${BOT_HOME}/logs/cron.log"
+                    /bin/bash "${BOT_HOME}/scripts/oauth-refresh.sh" --force \
+                        >> "${BOT_HOME}/logs/oauth-refresh.log" 2>&1 || true
+                    classification="retryable"
+                else
+                    classification="non-retryable"
+                fi
+                ;;
+            TOO_LONG)
                 classification="non-retryable"
                 ;;
             RATE_LIMITED)
@@ -273,11 +290,17 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
     # Compute backoff delay
     delay="${BACKOFF_DELAYS[$((attempt - 1))]}"
     if [[ "$classification" == "rate_limited" ]]; then
-        # Rate limit은 5시간 윈도우 기반 → 짧은 재시도는 무의미
-        # 1차: 5분, 2차: 15분 대기 (크론 다음 실행까지 양보)
-        delay=$(( 300 * attempt ))
+        # Rate limit 전용 강화된 backoff: 매우 공격적 (60s → 5m → 15m → 30m)
+        # 로그: 각 재시도 시마다 상태 기록
+        delay="${RATE_LIMIT_DELAYS[$((attempt - 1))]}"
+        printf '[%s] [%s] [RATE_LIMIT_BACKOFF] attempt=%d, waiting %ds before retry (exponential backoff)\n' \
+            "$(date '+%F %H:%M:%S')" "$TASK_ID" "$attempt" "$delay" \
+            >> "${BOT_HOME}/logs/cron.log"
     fi
 
+    printf '[%s] [%s] [RETRY_BACKOFF] attempt=%d, waiting %ds\n' \
+        "$(date '+%F %H:%M:%S')" "$TASK_ID" "$attempt" "$delay" \
+        >> "${BOT_HOME}/logs/cron.log"
     sleep "$delay"
 done
 

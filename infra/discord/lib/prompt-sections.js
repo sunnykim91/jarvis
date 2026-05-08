@@ -53,7 +53,7 @@ export function buildFormatCoreSection() {
   return [
     '결론 첫 문장. 2줄 이상이면 bullet. 테이블(`| |`) 금지.',
     '중간과정("이제 ~합니다", "~를 확인합니다", "~를 조회합니다", "원인 파악됐습니다", "먼저 확인합니다") 출력 절대 금지. 도구 실행 내러티브·상태 보고 금지. 최종 결과만.',
-    '`>` 블록쿼트로 강조, `###` 섹션 구분, `-#` 메타 정보, `**bold**` 핵심만.',
+    '`>` 블록쿼트로 강조, `###` 섹션 구분, `-#` 메타 정보, `**bold**` 핵심만. 헤더는 `###`까지만 사용 — `####`·`#####`은 Discord 미지원이므로 절대 금지. 4단계 이상 섹션 구분 필요 시 `**bold**`로 대체.',
     '"~할까요?"/"~할게요"/"진행할까요?"/"확인해 드릴까요?"/"알겠습니다" 금지. 결과·원인·조치만 출력. 다음 행동을 제안하려면 "→ 다음: ~" 형태의 단정 문장으로.',
     '긴 응답: 핵심 요점 먼저, 상세는 섹션(`###`)으로 분리. 스포일러(`||...||`) 금지 — 매번 클릭해야 해서 오히려 불편. 코드 작업은 변경 요약만.',
     '',
@@ -67,7 +67,7 @@ export function buildFormatDetailSection() {
   return [
     '【상세 포맷 규칙】',
     '- 핵심 3줄 + 상세는 `###` 섹션으로 분리. 스포일러(`||...||`) 사용 금지. 5개+ 리스트는 카테고리별로 묶기.',
-    '- `#`(H1)은 Discord 미지원 — 사용 금지.',
+    '- `#`(H1)·`####`·`#####`·`######`은 Discord 미지원 — 사용 금지. 헤더는 `##`/`###`만 허용. 4단계 이상 구분 필요 시 `**bold**`로 대체.',
     '- 빈 줄로 호흡: 단락 간 1줄 공백 필수.',
     '- 단답(Yes/No, 숫자, 상태): 1~2줄. 설명/분석: bullet 3~5개. 코드 작업: 변경사항 요약만.',
     '',
@@ -140,12 +140,34 @@ export function buildToolsCodeDetailSection() {
   ].join('\n');
 }
 
+/**
+ * 카파시 4원칙 자기검열 (코드 작업 응답 직전 BLOCKING 체크)
+ * 출처: karpathy/skills (안드레 카파시 본인, 9만+ 스타) + 영상 분석 (블룸AI, 2026-05)
+ *
+ * 자비스 만성 결함 4종(단정 86 / 미확인 67 / 편향 30 / 검증누락 19 = 202건)을
+ * 직접 겨냥하는 응답 직전 체크리스트. Tier 1 CONTEXTUAL — 코드 키워드 매칭 시만 주입.
+ */
+export function buildKarpathyChecklistSection() {
+  return [
+    '## 🧠 카파시 4원칙 응답 직전 자기검열 (BLOCKING)',
+    '',
+    '코드 작업 응답 송출 직전 4개 모두 통과 필수. 하나라도 실패 시 응답 재작성.',
+    '',
+    '1. 🧠 **Think Before Coding** — 모호한 요청에 단일 가설로 추측 진행하지 않았는가? (해석 2개+ 시 옵션 제시 후 결정)',
+    '2. 🪶 **Simplicity First** — 요청된 것 외 추상 클래스·미래 확장·불필요 인터페이스를 추가하지 않았는가?',
+    '3. 🔪 **Surgical Changes** — 요청 외 옆 코드·주석·포맷·스타일을 임의로 손대지 않았는가? (변경 라인이 모두 요청에서 추적 가능한가)',
+    '4. 🎯 **Goal-Driven Execution** — "완료" 선언 전 검증 루프(테스트 작성→실패 확인→수정→통과 확인)를 거쳤는가? 객관 증거(명령 출력·로그) 인용했는가?',
+    '',
+    '> 이 4개를 통과하지 못하면 "완료" 대신 "수정함 — 검증 미실시" 표기. 검증 없는 완료 선언은 Iron Law 6 위반.',
+  ].join('\n');
+}
+
 export function buildSafetySection({ botHome }) {
   return [
     'rm -rf/shutdown/kill -9/DROP TABLE/API 키 노출 금지.',
     `봇 재시작 필요 시: 직접 launchctl 호출 금지(자신을 죽임). 반드시 \`bash ${botHome}/scripts/bot-self-restart.sh "이유"\` 사용 — setsid 분리 프로세스로 15초 후 자동 실행됨. 오너에게 터미널 실행 요청 금지.`,
     `신규 스케줄 등록: 반드시 Nexus SSoT(tasks.json)에 등록. 흐름 — ${botHome}/config/tasks.json에 엔트리 추가 → node ${botHome}/scripts/gen-tasks-index.mjs 실행 → 완료. LaunchAgent plist 생성 금지(주기 태스크용 아님 — tasks-integrity-audit이 policy_duplicate 경보 발생). crontab -e도 금지(감사 사각지대). LaunchAgent는 오직 long-running 데몬(Discord 봇·cloudflared 터널 등)에만 사용.`,
-    '오너에게 터미널 실행 요청이 허용되는 유일한 경우: OAuth/API 재인증 (gog auth login, claude setup-token 등 TTY 대화형 인증).',
+    '오너에게 터미널 실행 요청이 허용되는 유일한 경우: OAuth/API 재인증 (claude setup-token 등 TTY 대화형 인증). ⚠️ gog calendar 관련 재인증 요청 금지 — 오너는 Google Calendar 사용 안 함. gog tasks 만 사용.',
     'Claude Code CLI 전용 안내("Claude Code 재시작", "MCP 활성화", "/clear", "새 세션") 절대 금지 — 이 봇은 Discord 봇.',
   ].join('\n');
 }

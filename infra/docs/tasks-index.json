@@ -1,24 +1,24 @@
 {
-  "generatedAt": "2026-04-29T02:56:39.471Z",
+  "generatedAt": "2026-05-07T23:28:12.617Z",
   "source": "~/jarvis/runtime/config/tasks.json",
-  "totalTasks": 110,
+  "totalTasks": 116,
   "teamDistribution": {
     "standup": 1,
     "president": 13,
     "infra-lead": 17,
     "finance": 8,
     "trend-lead": 8,
-    "record-lead": 7,
+    "record-lead": 8,
     "library": 1,
-    "growth-lead": 5,
+    "growth-lead": 6,
     "brand-lead": 4,
-    "audit-lead": 20,
+    "audit-lead": 22,
     "secretary": 8,
-    "uncategorized": 18
+    "uncategorized": 20
   },
   "typeDistribution": {
-    "prompt": 39,
-    "script": 71
+    "prompt": 42,
+    "script": 74
   },
   "groups": [
     {
@@ -1604,6 +1604,38 @@
           }
         },
         {
+          "id": "rag-lancedb-compact",
+          "name": "RAG LanceDB 주간 컴팩트",
+          "schedule": "15 4 * * 0",
+          "scheduleHuman": "일요일 04:15",
+          "type": "script",
+          "handler": "rag-lancedb-compact.sh",
+          "team": {
+            "id": "record-lead",
+            "name": "데이터실 (메모리·RAG 백엔드)"
+          },
+          "discordChannel": "jarvis-system",
+          "model": null,
+          "priority": "weekly",
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": "매주 일요일 04:15 KST. LanceDB fragment/version 컴팩트 + prune. 2026-05-07 누적 사고(208 fragments / 169 versions / 7.7GB → 1/1/3.7GB) 재발 방지용. 검색 속도 6배 향상 부수 효과.",
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/rag-lancedb-compact.log",
+              "exists": false
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/rag-lancedb-compact-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-rag-lancedb-compact-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
           "id": "record-daily",
           "name": "기록팀 일일 마감 (Record)",
           "schedule": "30 22 * * *",
@@ -1908,6 +1940,38 @@
           }
         },
         {
+          "id": "interview-harness-audit",
+          "name": "Interview Harness Audit (C1~C6)",
+          "schedule": "0 9 * * 1",
+          "scheduleHuman": "월요일 09:00",
+          "type": "prompt",
+          "handler": "ask-claude.sh (LLM)",
+          "team": {
+            "id": "growth-lead",
+            "name": "인재개발실 (성장·학습)"
+          },
+          "discordChannel": "jarvis-interview",
+          "model": "claude-haiku-4-5-20251001",
+          "priority": "weekly",
+          "maxBudget": "0.05",
+          "disabled": false,
+          "description": null,
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/interview-harness-audit.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/interview-harness-audit-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-interview-harness-audit-*.log",
+              "exists": true
+            }
+          }
+        },
+        {
           "id": "interview-ssot-audit",
           "name": "Interview SSoT Cross-Link Audit",
           "schedule": "0 9 * * 1",
@@ -1931,11 +1995,11 @@
             },
             "stderr": {
               "path": "~/jarvis/runtime/logs/interview-ssot-audit-err.log",
-              "exists": false
+              "exists": true
             },
             "claudeStderr": {
               "pattern": "claude-stderr-interview-ssot-audit-*.log",
-              "exists": false
+              "exists": true
             }
           }
         },
@@ -2180,6 +2244,38 @@
           }
         },
         {
+          "id": "claude-md-audit",
+          "name": "CLAUDE.md 비대화·stale·dead-ref 일일 점검",
+          "schedule": "45 5 * * 1",
+          "scheduleHuman": "월요일 05:45",
+          "type": "prompt",
+          "handler": "ask-claude.sh (LLM)",
+          "team": {
+            "id": "audit-lead",
+            "name": "QA실 (품질·감사·E2E)"
+          },
+          "discordChannel": "jarvis-system",
+          "model": null,
+          "priority": null,
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": null,
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/claude-md-audit.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/claude-md-audit-err.log",
+              "exists": true
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-claude-md-audit-*.log",
+              "exists": true
+            }
+          }
+        },
+        {
           "id": "code-auditor",
           "name": "코드 품질 감사",
           "schedule": "45 4 * * *",
@@ -2216,8 +2312,8 @@
           "name": "비용 캡 일일 감사",
           "schedule": "55 5 * * *",
           "scheduleHuman": "매일 05:55",
-          "type": "prompt",
-          "handler": "ask-claude.sh (LLM)",
+          "type": "script",
+          "handler": "cost-cap-audit.sh",
           "team": {
             "id": "audit-lead",
             "name": "QA실 (품질·감사·E2E)"
@@ -2527,6 +2623,38 @@
             },
             "claudeStderr": {
               "pattern": "claude-stderr-log-size-audit-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
+          "id": "qa-consistency-audit",
+          "name": "Q&A 정합성 감사 (answerGuide ↔ approvedAnswer)",
+          "schedule": "0 9 * * 1",
+          "scheduleHuman": "월요일 09:00",
+          "type": "prompt",
+          "handler": "ask-claude.sh (LLM)",
+          "team": {
+            "id": "audit-lead",
+            "name": "QA실 (품질·감사·E2E)"
+          },
+          "discordChannel": "jarvis-interview",
+          "model": "claude-haiku-4-5-20251001",
+          "priority": "weekly",
+          "maxBudget": "0.05",
+          "disabled": false,
+          "description": null,
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/qa-consistency-audit.log",
+              "exists": false
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/qa-consistency-audit-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-qa-consistency-audit-*.log",
               "exists": false
             }
           }
@@ -3476,6 +3604,38 @@
           }
         },
         {
+          "id": "mistake-pattern-analyzer",
+          "name": "오답노트 반복 패턴 일일 분석",
+          "schedule": "30 3 * * *",
+          "scheduleHuman": "매일 03:30",
+          "type": "prompt",
+          "handler": "ask-claude.sh (LLM)",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": "jarvis-system",
+          "model": null,
+          "priority": null,
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": null,
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/mistake-pattern-analyzer.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/mistake-pattern-analyzer-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-mistake-pattern-analyzer-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
           "id": "plist-bypass-autofix",
           "name": "plist BYPASS 자동 복구 가드",
           "schedule": "0 6 * * *",
@@ -3567,6 +3727,38 @@
             },
             "claudeStderr": {
               "pattern": "claude-stderr-self-healing-digest-*.log",
+              "exists": false
+            }
+          }
+        },
+        {
+          "id": "session-report",
+          "name": "토큰 사용 분석 HTML 리포트 (주간)",
+          "schedule": "50 23 * * 0",
+          "scheduleHuman": "일요일 23:50",
+          "type": "script",
+          "handler": "session-report.sh",
+          "team": {
+            "id": "uncategorized",
+            "name": "미분류"
+          },
+          "discordChannel": "jarvis-system",
+          "model": null,
+          "priority": null,
+          "maxBudget": "0.00",
+          "disabled": false,
+          "description": null,
+          "logs": {
+            "stdout": {
+              "path": "~/jarvis/runtime/logs/session-report.log",
+              "exists": true
+            },
+            "stderr": {
+              "path": "~/jarvis/runtime/logs/session-report-err.log",
+              "exists": false
+            },
+            "claudeStderr": {
+              "pattern": "claude-stderr-session-report-*.log",
               "exists": false
             }
           }
